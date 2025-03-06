@@ -81,7 +81,7 @@ EOF
     systemctl enable systemd-networkd
     systemctl restart systemd-networkd
     netplan apply
-    git clone https://github.com/X3Ld0R/CapX-Nederland-5G.git
+    git clone https://github.com/Kaokab1979/Kaokab5G.git
  #  cp -fR /root/CapX-Nederland-5G/00-installer-config.yaml /etc/netplan/    # File Doesn't exist !
     add-apt-repository ppa:open5gs/latest
     sudo apt update && sudo apt upgrade
