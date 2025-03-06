@@ -17,10 +17,12 @@ upf:
 #        - address: 127.0.0.4
   gtpu:
     server:
-      - address: 10.100.100.7
+      - address: 127.0.0.7
   session:
-    - subnet: 10.45.0.1/16
-      # gateway: 10.45.0.1
+    - subnet: 10.45.0.0/16
+      gateway: 10.45.0.1
+    - subnet: 2001:db8:cafe::/48
+      gateway: 2001:db8:cafe::1
   metrics:
     server:
       - address: 127.0.0.7
