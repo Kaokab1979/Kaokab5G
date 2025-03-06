@@ -1,15 +1,15 @@
 # Kaokab5G
 ###Kaokab5G: A Tailored EPC for Private LTE and 5G
 
-The CapX Core represents a cutting-edge Evolved Packet Core (EPC) and 5G Core (5GC) solution designed to cater to the unique requirements of Private LTE and 5G networks, completely compliant with 3GPP Release 16 standards. Built on the robust foundation of the Open5GS core, the Capx Core is meticulously tailored to integrate seamlessly with Capx products, offering unparalleled performance, flexibility, and security for enterprise and industrial applications.
+The Kaokab5G represents a cutting-edge Evolved Packet Core (EPC) and 5G Core (5GC) solution designed to cater to the unique requirements of Private LTE and 5G networks, completely compliant with 3GPP Release 16 standards. Built on the robust foundation of the Open5GS core, the Kaokab5G is meticulously tailored to integrate seamlessly with Capx products, offering unparalleled performance, flexibility, and security for enterprise and industrial applications.
 
 #### Foundation: Open5GS Core
 
-Open5GS is a well-established open-source project providing a comprehensive 4G/5G core network implementation. It supports a wide range of functionalities required for EPC, including MME (Mobility Management Entity), SGW (Serving Gateway), PGW (PDN Gateway), and HSS (Home Subscriber Server). By leveraging the Open5GS core, Capx Core inherits a reliable and scalable architecture that has been tested and validated across various deployments worldwide.
+Open5GS is a well-established open-source project providing a comprehensive 4G/5G core network implementation. It supports a wide range of functionalities required for EPC, including MME (Mobility Management Entity), SGW (Serving Gateway), PGW (PDN Gateway), and HSS (Home Subscriber Server). By leveraging the Open5GS core, The Kaokab5G inherits a reliable and scalable architecture that has been tested and validated across various deployments worldwide.
 
 #### Tailored Enhancements for Capx Products
 
-The Capx Core extends the capabilities of Open5GS with several enhancements specifically designed to optimize performance and integration with Capx's suite of products. These enhancements include:
+The Kaokab5G extends the capabilities of Open5GS with several enhancements specifically designed to optimize performance and integration with Capx's suite of products. These enhancements include:
 
 1. **Customized Interface Adaptations**: Kaokab5G features customized interfaces that ensure seamless integration with Capx's hardware and software solutions. This results in optimized data flows and reduced latency, critical for applications requiring real-time communication and high throughput.
 
