@@ -31,15 +31,37 @@ if [ "$OS" = "ubuntu2204" ]; then
     systemctl enable systemd-networkd
 
     # Install MongoDB
-    echo -e "${BOLD}${BLUE}Installing MongoDB...${RESET}"
-    sudo apt update
-    sudo apt install -y gnupg
-    curl -fsSL https://www.mongodb.org/static/pgp/server-6.0.asc | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/mongodb-archive-keyring.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
-    sudo apt update
-    sudo apt install -y mongodb-org
-    sudo systemctl start mongod
-    sudo systemctl enable mongod
+    # Install MongoDB 4.4
+echo -e "${BOLD}${BLUE}Installing MongoDB 4.4...${RESET}"
+
+# Add MongoDB 4.4 repository
+echo "deb [arch=amd64] https://repo.mongodb.org/apt/ubuntu bionic/mongodb-org/4.4 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-4.4.list
+
+# Update the package list
+sudo apt-get update
+
+# Install MongoDB 4.4
+sudo apt-get install -y mongodb-org
+
+# Start the MongoDB service
+sudo systemctl start mongod
+
+# Enable MongoDB to start on boot
+sudo systemctl enable mongod
+
+# Check if MongoDB is running
+echo -e "${BOLD}${BLUE}Checking if MongoDB is running...${RESET}"
+if sudo systemctl is-active --quiet mongod; then
+    echo -e "${GREEN}✅ MongoDB 4.4 is running successfully!${RESET}"
+else
+    echo -e "${RED}❌ ERROR: MongoDB 4.4 is NOT running. Please check the logs for more details.${RESET}"
+    sudo journalctl -u mongod --no-pager
+    exit 1
+fi
+
+# Check MongoDB status
+sudo systemctl status mongod
+
 
     # Clone the Kaokab5G repository
     git clone https://github.com/Kaokab1979/Kaokab5G.git
