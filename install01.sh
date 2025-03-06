@@ -69,8 +69,8 @@ if [ "$OS" = "ubuntu2204" ]; then
     sudo apt update
     sudo apt install -y nodejs
     curl -fsSL https://open5gs.org/open5gs/assets/webui/install | sudo -E bash - 
-    cp -fR root/Kaokab5G/usr/lib/node_modules/open5gs/next/* /usr/lib/node_modules/open5gs/.next/
-    cp -fR root/Kaokab5G/Open5GS/* /etc/open5gs/
+    cp -fR /root/Kaokab5G/usr/lib/node_modules/open5gs/next/* /usr/lib/node_modules/open5gs/.next/
+    cp -fR /root/Kaokab5G/Open5GS/* /etc/open5gs/
 
     # Configure IP forwarding permanently
     echo -e "${BOLD}${BLUE}Enabling IP forwarding...${RESET}"
@@ -99,7 +99,7 @@ if [ "$OS" = "ubuntu2204" ]; then
 
     echo -e "${GREEN}✅ IP forwarding and NAT rules have been set up and made persistent.${RESET}"
 
-    # Modify open5gs-webui.service to allow access from 0.0.0.0:9999
+# Modify open5gs-webui.service to allow access from 0.0.0.0:9999
 echo -e "${BOLD}${BLUE}Modifying open5gs-webui.service...${RESET}"
 sudo tee /lib/systemd/system/open5gs-webui.service > /dev/null <<EOF
 [Unit]
