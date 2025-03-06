@@ -4,39 +4,39 @@
 
 # Echo message before checking the OS
 echo "Checking the OS version..."
-issue=`head -1 /etc/issue 2>/dev/null`
+issue=$(head -1 /etc/issue 2>/dev/null)
 case $issue in
     Ubuntu\ 22.04*)
         OS=ubuntu2204
         ;;
+    *)
+        >&2 echo "Unsupported OS"
+        exit
+        ;;
 esac
 
-if [ -z $OS ]
-then
-    >&2 echo "Unsupported OS"
-    exit
-fi
+if [ "$OS" = "ubuntu2204" ]; then
+    echo "Your server meets the standard specifications of Ubuntu 22.04"
+    
+    # Ask for user inputs for the IP addresses and interface name
+    read -p "Enter the interface name (e.g., enp0s25): " interface
+    read -p "Enter the IP address for s1ap (e.g., 10.100.100.2/23): " s1ap_ip
+    read -p "Enter the IP address for gtpu (e.g., 10.100.100.6/23): " gtpu_ip
+    read -p "Enter the IP address for upf (e.g., 10.100.100.7/23): " upf_ip
+    read -p "Enter the gateway IP (e.g., 10.100.100.254): " gateway
+    read -p "Enter DNS1 IP (e.g., 1.0.0.1): " dns1
+    read -p "Enter DNS2 IP (e.g., 1.1.1.1): " dns2
+    read -p "Enter APN1 pool ip (e.g., 10.45.0.1/16): " apnpool1
+    read -p "Enter APN1 gateway ip (e.g., 10.45.0.1): " apngateway1
+    
+    # Backup the existing netplan configuration
+    cp /etc/netplan/00-installer-config.yaml /etc/netplan/00-installer-config.yaml.bak
+    echo "Backup of existing netplan configuration created at /etc/netplan/00-installer-config.yaml.bak"
 
-if [ "$OS" = "ubuntu2204" ]
-then
-echo "Your server meets the standard specifications of Ubuntu 22.04"
-
-# Vraag de interface naam
-read -p "Enter the interface name (e.g., enp0s25): " interface
-
-# Vraag de IP-adressen en labels voor de verschillende services
-read -p "Enter the IP address for s1ap (e.g., 10.100.100.2/23): " s1ap_ip
-read -p "Enter the IP address for gtpu (e.g., 10.100.100.6/23): " gtpu_ip
-read -p "Enter the IP address for upf (e.g., 10.100.100.7/23): " upf_ip
-read -p "Enter the gateway IP (e.g., 10.100.100.254): " gateway
-read -p "Enter DNS1 IP (e.g., 1.0.0.1): " dns1
-read -p "Enter DNS2 IP (e.g., 1.1.1.1): " dns2
-read -p "Enter APN1 pool ip (e.g., 10.45.0.1/16: " apnpool1
-read -p "Enter APN1 gateway ip (e.g., 10.45.0.1: " apngateway1
-
-# Netplan configuratiebestand maken
-cat <<EOL > /etc/netplan/00-installer-config.yaml
+    # Create new netplan configuration
+    cat <<EOL > /etc/netplan/00-installer-config.yaml
 network:
+  version: 2
   ethernets:
     $interface:
       dhcp4: no
@@ -48,9 +48,28 @@ network:
         - to: default
           via: $gateway
       nameservers:
-       addresses: [$dns1, $dns2]
-  version: 2
+        addresses: [$dns1, $dns2]
 EOL
+
+    echo "Netplan configuration updated successfully."
+
+    # Apply the netplan configuration
+    netplan try
+    if [ $? -eq 0 ]; then
+        echo "Netplan changes are valid. Applying the configuration..."
+        netplan apply
+    else
+        echo "There was an error with the netplan configuration. Reverting changes."
+        cp /etc/netplan/00-installer-config.yaml.bak /etc/netplan/00-installer-config.yaml
+        netplan apply
+        exit 1
+    fi
+
+    # Optional: Continue with Open5GS installation or other processes
+    echo "Proceeding with further script actions..."
+    # Further actions can be added here for Open5GS installation, etc.
+
+fi
 # Maak tunnel definatief
 cat << EOF > /etc/systemd/network/99-open5gs.netdev
 [NetDev]
@@ -82,9 +101,9 @@ EOF
     apt install nodejs -y
     apt install open5gs
     curl -fsSL https://open5gs.org/open5gs/assets/webui/install | sudo -E bash -
-    cp -fR /root/CapX-Nederland-5G/restart.sh /root/
-    cp -fR /root/CapX-Nederland-5G/usr/lib/node_modules/open5gs/next/* /usr/lib/node_modules/open5gs/.next/
-    cp -fR /root/CapX-Nederland-5G/Open5GS/* /etc/open5gs/ 
+    cp -fR /root/Kaokab5G/restart.sh /root/
+    cp -fR root/Kaokab5G/usr/lib/node_modules/open5gs/next/* /usr/lib/node_modules/open5gs/.next/
+    cp -fR root/Kaokab5G/Open5GS/* /etc/open5gs/ 
     sysctl -w net.ipv4.ip_forward=1
     sysctl -w net.ipv6.conf.all.forwarding=1
     iptables -t nat -A POSTROUTING -s 10.45.0.1/16 ! -o ogstun -j MASQUERADE
