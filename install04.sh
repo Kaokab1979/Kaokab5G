@@ -48,11 +48,11 @@ echo -e "\n${BOLD}${BLUE}Please enter the following details for your network set
 echo -e "\n${BOLD}${BLUE}Enter the network interface name${RESET} (e.g., enp0s25 or eth0):"
 read -p "${BOLD}Interface Name: ${RESET}" interface
 
-echo -e "\n${BOLD}${BLUE}Enter the IP address for the S1AP interface (Control Plane):${RESET}"
+echo -e "\n${BOLD}${BLUE}Enter the IP address for the S1AP/N2 interface (Control Plane):${RESET}"
 echo -e "${BOLD}${GREEN}Example:${RESET} 192.168.1.2/24"
 read -p "${BOLD}S1AP_IP (Control Plane): ${RESET}" s1ap_ip
 
-echo -e "\n${BOLD}${BLUE}Enter the IP address for the GTPU interface (User Plane):${RESET}"
+echo -e "\n${BOLD}${BLUE}Enter the IP address for the GTPU/N3 interface (User Plane):${RESET}"
 echo -e "${BOLD}${GREEN}Example:${RESET} 192.168.1.6/24"
 read -p "${BOLD}GTPU_IP (User Plane): ${RESET}" gtpu_ip
 
