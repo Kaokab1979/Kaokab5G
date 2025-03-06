@@ -1,6 +1,5 @@
-# CapX-Nederland-5G
-
-### Capx Core: A Tailored EPC for Private LTE and 5G
+# Kaokab5G
+###Kaokab5G: A Tailored EPC for Private LTE and 5G
 
 The CapX Core represents a cutting-edge Evolved Packet Core (EPC) and 5G Core (5GC) solution designed to cater to the unique requirements of Private LTE and 5G networks, completely compliant with 3GPP Release 16 standards. Built on the robust foundation of the Open5GS core, the Capx Core is meticulously tailored to integrate seamlessly with Capx products, offering unparalleled performance, flexibility, and security for enterprise and industrial applications.
 
