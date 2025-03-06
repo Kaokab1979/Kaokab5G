@@ -136,3 +136,124 @@ echo -e "${GREEN}✅ Kaokab5G configurations applied successfully.${RESET}"
 sleep 2
 
 echo -e "\n${BOLD}${GREEN}🎉 Installation of KAOKAB and its components is complete!${RESET}"
+# Configure IP forwarding permanently
+    echo -e "${BOLD}${BLUE}Enabling IP forwarding...${RESET}"
+    echo "net.ipv4.ip_forward=1" | sudo tee /etc/sysctl.d/99-open5gs.conf
+    echo "net.ipv6.conf.all.forwarding=1" | sudo tee -a /etc/sysctl.d/99-open5gs.conf
+    sudo sysctl --system
+
+    # Display the result of IP forwarding status
+    echo -e "${BOLD}${BLUE}IP forwarding status:${RESET}"
+    sysctl net.ipv4.ip_forward
+
+    # Configure NAT rules
+    echo -e "${BOLD}${BLUE}Configuring NAT rules...${RESET}"
+    sudo iptables -t nat -A POSTROUTING -s 10.45.0.0/16 ! -o ogstun -j MASQUERADE
+    sudo ip6tables -t nat -A POSTROUTING -s 2001:db8:cafe::/48 ! -o ogstun -j MASQUERADE
+
+    # Save iptables rules to be persistent
+    echo -e "${BOLD}${BLUE}Saving iptables rules...${RESET}"
+    sudo apt-get install -y iptables-persistent
+    sudo netfilter-persistent save
+    sudo netfilter-persistent reload
+
+    # Display the result of NAT rules for ogstun
+    echo -e "${BOLD}${BLUE}Current NAT rules for ogstun:${RESET}"
+    sudo iptables -t nat -S | grep ogstun
+
+    echo -e "${GREEN}✅ IP forwarding and NAT rules have been set up and made persistent.${RESET}"
+
+# Modify open5gs-webui.service to allow access from 0.0.0.0:9999
+echo -e "${BOLD}${BLUE}Modifying open5gs-webui.service...${RESET}"
+sudo tee /lib/systemd/system/open5gs-webui.service > /dev/null <<EOF
+[Unit]
+Description=Open5GS WebUI
+Wants=mongodb.service mongod.service
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/lib/node_modules/open5gs
+Environment=NODE_ENV=production
+Environment=HOSTNAME=0.0.0.0
+Environment=PORT=9999
+ExecStart=/usr/bin/node server/index.js --address \${HOSTNAME} --port \${PORT}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Reload systemd and restart the service
+echo -e "${BOLD}${BLUE}Reloading systemd and restarting the Open5GS WebUI service...${RESET}"
+sudo systemctl daemon-reload
+
+# Sleep for a few seconds to allow systemd to reload and update the service
+sleep 3
+
+sudo systemctl restart open5gs-webui
+sudo systemctl enable open5gs-webui
+sleep 3
+# Verify if the service is listening on 0.0.0.0:9999
+echo -e "${BOLD}${BLUE}Checking if KAOKAB WebUI is listening on 0.0.0.0:9999...${RESET}"
+if sudo ss -tuln | grep -q "0.0.0.0:9999"; then
+    echo -e "${GREEN}✅ KAOKAB WebUI is successfully listening on 0.0.0.0:9999${RESET}"
+else
+    echo -e "${RED}❌ ERROR: KAOKAB WebUI is NOT listening on 0.0.0.0:9999. Check service status.${RESET}"
+    sudo systemctl status open5gs-webui --no-pager
+    exit 1
+fi
+
+    # Check the status of all Open5GS services
+    echo -e "${BOLD}${BLUE}Checking KAOKAB Services Status...${RESET}"
+    open5gs_status=$(sudo systemctl is-active open5gs-* )
+    if echo "$open5gs_status" | grep -q "inactive\|failed"; then
+        echo -e "${RED}❌ ERROR: Some KAOKAB services are not running!${RESET}"
+        echo -e "${RED}Check the status below:${RESET}"
+        sudo systemctl list-units --all --plain --no-pager | grep 'open5gs-'
+        exit 1
+    else
+        echo -e "${GREEN}✅ All KAOKAB services are running successfully!${RESET}"
+    fi
+
+    # Display Open5GS service list
+    echo -e "${BOLD}${BLUE}Current KAOKAB Services:${RESET}"
+    sudo systemctl list-units --all --plain --no-pager | grep 'open5gs-'
+#!/bin/bash
+
+# Get server IP dynamically
+SERVER_IP=$(hostname -I | awk '{print $1}')
+
+# Connect to the KAOKAB WebUI
+echo -e "\n${BOLD}${BLUE}🔗 Connect to the KAOKAB WebUI:${RESET}"
+echo -e "${BOLD}${GREEN}👉 http://$SERVER_IP:9999${RESET}"
+sleep 2
+
+# Display login credentials
+echo -e "\n${BOLD}${BLUE}Login Credentials:${RESET}"
+echo -e "${BOLD}Username:${RESET} ${GREEN}admin${RESET}"
+echo -e "${BOLD}Password:${RESET} ${GREEN}1423${RESET}"
+sleep 2
+
+# Tip to change the password
+echo -e "\n${BOLD}${BLUE}Tip:${RESET} You can change the password in the Account Menu."
+sleep 2
+
+# Steps to Add a Subscriber
+echo -e "\n${BOLD}${BLUE}📌 Steps to Add a Subscriber:${RESET}"
+echo -e "${GREEN}1.${RESET} Go to the Subscriber Menu."
+echo -e "${GREEN}2.${RESET} Click the ${BOLD}+${RESET} button to add a new subscriber."
+echo -e "${GREEN}3.${RESET} Fill in the IMSI, security context (K, OPc, AMF), and APN of the subscriber."
+echo -e "${GREEN}4.${RESET} Click the ${BOLD}SAVE${RESET} button."
+sleep 2
+
+# Final success message with large design and color
+echo -e "\n"
+echo -e "${BOLD}${GREEN}###############################${RESET}"
+echo -e "${BOLD}${GREEN}# INSTALLATION COMPLETED      #${RESET}"
+echo -e "${BOLD}${GREEN}# SUCCESSFULLY! 🚀           #${RESET}"
+echo -e "${BOLD}${GREEN}###############################${RESET}"
+sleep 2
+
+# End of script
+echo -e "\n${BOLD}${GREEN}Installation completed successfully!${RESET}"
