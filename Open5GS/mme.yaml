@@ -1,7 +1,7 @@
 logger:
   file:
     path: /var/log/open5gs/mme.log
-    level: debug   # fatal|error|warn|info(default)|debug|trace
+#  level: info   # fatal|error|warn|info(default)|debug|trace
 
 global:
   max:
@@ -12,7 +12,7 @@ mme:
   freeDiameter: /etc/freeDiameter/mme.conf
   s1ap:
     server:
-      - address: 10.100.100.2
+      - address: 127.0.0.2
   gtpc:
     server:
       - address: 127.0.0.2
@@ -40,8 +40,8 @@ mme:
     integrity_order : [ EIA2, EIA1, EIA0 ]
     ciphering_order : [ EEA0, EEA1, EEA2 ]
   network_name:
-    full: Kaokab4G
-    short: Kaokab4G
+    full: I<aokab
+    short: Next
   mme_name: Kaokab-mme0
   time:
 #    t3402:
@@ -50,7 +50,6 @@ mme:
 #      value: 3240  # 54 minutes * 60 = 3240 seconds
 #    t3423:
 #      value: 720   # 12 minutes * 60 = 720 seconds
-
 ################################################################################
 # S1AP Server
 ################################################################################
