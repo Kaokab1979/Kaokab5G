@@ -249,6 +249,13 @@ echo -e "\n${BOLD}${GREEN}🎉 Installation of KAOKAB and its components is comp
 
     echo -e "${GREEN}✅ IP forwarding and NAT rules have been set up and made persistent.${RESET}"
 #
+# Function to display a large blinking message
+echo -e "\e[1;5;32m========================================\e[0m"
+echo -e "\e[1;5;32m   KAOKAB5G is configuring Network Functions   \e[0m"
+echo -e "\e[1;5;32m========================================\e[0m"
+
+# Wait for 3 seconds to show the message
+sleep 2
 # Configure Network Functions
 #
 ## AMF configuratie
