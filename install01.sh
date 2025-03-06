@@ -129,6 +129,7 @@ sleep 3
 
 sudo systemctl restart open5gs-webui
 sudo systemctl enable open5gs-webui
+sleep 3
 # Verify if the service is listening on 0.0.0.0:9999
 echo -e "${BOLD}${BLUE}Checking if KAOKAB WebUI is listening on 0.0.0.0:9999...${RESET}"
 if sudo ss -tuln | grep -q "0.0.0.0:9999"; then
