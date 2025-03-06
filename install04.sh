@@ -41,6 +41,88 @@ else
     echo -e "${BOLD}${RED}Press Ctrl+C to exit.${RESET}"
     exit 1
 fi
+# Prompt the user for interface name and IP addresses
+echo -e "\n${BOLD}${BLUE}Please enter the following details for your network setup:${RESET}"
+
+# Ask for interface name and IPs
+echo -e "\n${BOLD}${BLUE}Enter the network interface name${RESET} (e.g., enp0s25 or eth0):"
+read -p "${BOLD}Interface Name: ${RESET}" interface
+
+echo -e "\n${BOLD}${BLUE}Enter the IP address for the S1AP interface (Control Plane):${RESET}"
+echo -e "${BOLD}${GREEN}Example:${RESET} 192.168.1.2/24"
+read -p "${BOLD}S1AP_IP (Control Plane): ${RESET}" s1ap_ip
+
+echo -e "\n${BOLD}${BLUE}Enter the IP address for the GTPU interface (User Plane):${RESET}"
+echo -e "${BOLD}${GREEN}Example:${RESET} 192.168.1.6/24"
+read -p "${BOLD}GTPU_IP (User Plane): ${RESET}" gtpu_ip
+
+echo -e "\n${BOLD}${BLUE}Enter the IP address for the UPF interface (User Plane Function):${RESET}"
+echo -e "${BOLD}${GREEN}Example:${RESET} 192.168.1.7/24"
+read -p "${BOLD}UPF_IP (User Plane Function): ${RESET}" upf_ip
+
+echo -e "\n${BOLD}${BLUE}Enter the gateway IP address:${RESET}"
+echo -e "${BOLD}${GREEN}Example:${RESET} 192.168.1.254"
+read -p "${BOLD}Gateway IP: ${RESET}" gateway
+
+echo -e "\n${BOLD}${BLUE}Enter DNS1 IP address:${RESET}"
+echo -e "${BOLD}${GREEN}Example:${RESET} 1.0.0.1"
+read -p "${BOLD}DNS1 IP: ${RESET}" dns1
+
+echo -e "\n${BOLD}${BLUE}Enter DNS2 IP address:${RESET}"
+echo -e "${BOLD}${GREEN}Example:${RESET} 1.1.1.1"
+read -p "${BOLD}DNS2 IP: ${RESET}" dns2
+
+echo -e "\n${BOLD}${BLUE}Enter the APN pool IP address (for subscriber configuration):${RESET}"
+echo -e "${BOLD}${GREEN}Example:${RESET} 10.45.0.1/16"
+read -p "${BOLD}APN Pool IP (IPv4): ${RESET}" apnpool1
+
+echo -e "\n${BOLD}${BLUE}Enter the APN gateway IP address:${RESET}"
+echo -e "${BOLD}${GREEN}Example:${RESET} 10.45.0.1"
+read -p "${BOLD}APN Gateway IP (IPv4): ${RESET}" apngateway1
+
+# Netplan configuration file creation
+echo -e "\n${BOLD}${BLUE}Generating the netplan configuration file...${RESET}"
+
+cat <<EOL > /etc/netplan/00-installer-config.yaml
+network:
+  ethernets:
+    $interface:
+      dhcp4: no
+      addresses:
+       - $s1ap_ip
+       - $gtpu_ip
+       - $upf_ip
+      routes:
+        - to: default
+          via: $gateway
+      nameservers:
+       addresses: [$dns1, $dns2]
+  version: 2
+EOL
+# Give user a moment to review
+sleep 3
+
+# Ask if the user wants to back up the netplan configuration
+echo -e "\n${BOLD}${BLUE}Would you like to backup the current netplan configuration before applying?${RESET}"
+echo -e "${BOLD}${GREEN}If yes, press Enter. If no, press Ctrl+C to exit.${RESET}"
+read -r
+
+# Backup the current netplan configuration
+cp /etc/netplan/00-installer-config.yaml /etc/netplan/00-installer-config.yaml.bak
+echo -e "\n${BOLD}${GREEN}✅ Backup created at /etc/netplan/00-installer-config.yaml.bak${RESET}"
+sleep 2
+
+# Apply the new netplan configuration
+echo -e "\n${BOLD}${BLUE}Applying the new netplan configuration...${RESET}"
+sudo netplan apply
+
+# Give time for the system to apply the settings
+sleep 3
+
+# Confirm netplan was applied successfully
+echo -e "\n${BOLD}${GREEN}✅ Netplan configuration applied successfully!${RESET}"
+# Display success message
+echo -e "\n${BOLD}${GREEN}✅ Netplan configuration successfully generated for interface $interface!${RESET}"
 # Install required packages
 echo -e "\n${BOLD}${BLUE}Step 1: Installing required system packages...${RESET}"
 sudo apt update
