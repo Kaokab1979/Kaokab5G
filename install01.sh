@@ -99,8 +99,8 @@ if [ "$OS" = "ubuntu2204" ]; then
     echo -e "${GREEN}✅ IP forwarding and NAT rules have been set up and made persistent.${RESET}"
 
     # Modify open5gs-webui.service to allow access from 0.0.0.0:9999
-    echo -e "${BOLD}${BLUE}Modifying open5gs-webui.service...${RESET}"
-    sudo tee /lib/systemd/system/open5gs-webui.service > /dev/null <<EOF
+echo -e "${BOLD}${BLUE}Modifying open5gs-webui.service...${RESET}"
+sudo tee /lib/systemd/system/open5gs-webui.service > /dev/null <<EOF
 [Unit]
 Description=Open5GS WebUI
 Wants=mongodb.service mongod.service
@@ -119,20 +119,24 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-    # Reload systemd and restart the service
-    sudo systemctl daemon-reload
-    sudo systemctl restart open5gs-webui
-    sudo systemctl enable open5gs-webui
+# Reload systemd and restart the service
+echo -e "${BOLD}${BLUE}Reloading systemd and restarting the Open5GS WebUI service...${RESET}"
+sudo systemctl daemon-reload
 
-    # Verify if the service is listening on 0.0.0.0:9999
-    echo -e "${BOLD}${BLUE}Checking if KAOKAB WebUI is listening on 0.0.0.0:9999...${RESET}"
-    if sudo ss -tuln | grep -q "0.0.0.0:9999"; then
-        echo -e "${GREEN}✅ KAOKAB WebUI is successfully listening on 0.0.0.0:9999${RESET}"
-    else
-        echo -e "${RED}❌ ERROR: KAOKAB WebUI is NOT listening on 0.0.0.0:9999. Check service status.${RESET}"
-        sudo systemctl status open5gs-webui --no-pager
-        exit 1
-    fi
+# Sleep for a few seconds to allow systemd to reload and update the service
+sleep 3
+
+sudo systemctl restart open5gs-webui
+sudo systemctl enable open5gs-webui
+# Verify if the service is listening on 0.0.0.0:9999
+echo -e "${BOLD}${BLUE}Checking if KAOKAB WebUI is listening on 0.0.0.0:9999...${RESET}"
+if sudo ss -tuln | grep -q "0.0.0.0:9999"; then
+    echo -e "${GREEN}✅ KAOKAB WebUI is successfully listening on 0.0.0.0:9999${RESET}"
+else
+    echo -e "${RED}❌ ERROR: KAOKAB WebUI is NOT listening on 0.0.0.0:9999. Check service status.${RESET}"
+    sudo systemctl status open5gs-webui --no-pager
+    exit 1
+fi
 
     # Check the status of all Open5GS services
     echo -e "${BOLD}${BLUE}Checking KAOKAB Services Status...${RESET}"
