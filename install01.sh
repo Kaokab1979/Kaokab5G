@@ -31,7 +31,8 @@ if [ "$OS" = "ubuntu2204" ]; then
     echo -e "${GREEN}✅ Your server meets the standard specifications of Ubuntu 22.04${RESET}"
     
     # Install required packages
-    sudo apt install -y vim net-tools ca-certificates curl gnupg nodejs iputils-ping git software-properties-common iptables netplan
+    sudo apt update
+    sudo apt install -y vim net-tools ca-certificates curl gnupg nodejs iputils-ping git software-properties-common iptables
     systemctl enable systemd-networkd
     systemctl restart systemd-networkd
     systemctl enable systemd-networkd
