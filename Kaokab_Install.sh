@@ -72,7 +72,16 @@ dns1=$(input_box "Enter DNS1 IP address - Example: 1.0.0.1")
 dns2=$(input_box "Enter DNS2 IP address - Example: 1.1.1.1")
 apnpool1=$(input_box "Enter the APN pool IP address (for subscriber configuration) - Example: 10.45.0.1/16")
 apngateway1=$(input_box "Enter the APN gateway IP address - Example: 10.45.0.1")
-
+# Ask for MCC (Mobile Country Code) and MNC (Mobile Network Code) for PLMN configuration
+mcc=$(input_box "Enter the MCC (Mobile Country Code) for your network - Example: 204")
+mnc=$(input_box "Enter the MNC (Mobile Network Code) for your network - Example: 25")
+# Ask for S-NSSAI (Slice Service Type and Slice Differentiator)
+sst=$(input_box "Enter the SST (Slice Service Type) - Example: 1")
+sd=$(input_box "Enter the SD (Slice Differentiator) - Example: 010203")
+# Ask for additional network configuration fields
+tac=$(input_box "Enter the TAC (Tracking Area Code) - Example: 1")
+region=$(input_box "Enter the Guami AMF region - Example: region 2")
+set=$(input_box "Enter the Guami set - Example: set 1")
 # Netplan configuration file creation
 echo -e "\n${BOLD}${BLUE}Generating the netplan configuration file...${RESET}"
 
