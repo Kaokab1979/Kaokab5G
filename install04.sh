@@ -416,8 +416,8 @@ mme:
     integrity_order : [ EIA2, EIA1, EIA0 ]
     ciphering_order : [ EEA0, EEA1, EEA2 ]
   network_name:
-    full: ICTimmers
-    short: ICTimmers
+    full: Kaokab_4G
+    short: Kaokab_4G
   mme_name: open5gs-mme0
   time:
 EOL
