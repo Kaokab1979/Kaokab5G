@@ -89,3 +89,50 @@ else
     echo -e "${RED}❌ ERROR: MongoDB is not running! Please check the logs.${RESET}"
     exit 1
 fi
+#!/bin/bash
+
+# Clone the Kaokab5G repository
+echo -e "\n${BOLD}${BLUE}Step 1: Cloning Kaokab5G repository...${RESET}"
+git clone https://github.com/Kaokab1979/Kaokab5G.git
+echo -e "${GREEN}✅ Kaokab5G repository cloned successfully.${RESET}"
+sleep 2
+
+# Install KAOKAB
+echo -e "\n${BOLD}${BLUE}Step 2: Installing KAOKAB...${RESET}"
+sudo add-apt-repository -y ppa:open5gs/latest
+sudo apt update
+sudo apt install -y open5gs
+echo -e "${GREEN}✅ KAOKAB installed successfully.${RESET}"
+sleep 2
+
+# Install Node.js and KAOKAB WebUI
+echo -e "\n${BOLD}${BLUE}Step 3: Installing Node.js and KAOKAB WebUI...${RESET}"
+sudo apt update
+sudo apt install -y ca-certificates curl gnupg
+sleep 2
+
+# Add Node.js repository
+echo -e "${BOLD}${BLUE}Adding Node.js repository...${RESET}"
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+NODE_MAJOR=20
+echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODE_MAJOR.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list
+sudo apt update
+sudo apt install -y nodejs
+echo -e "${GREEN}✅ Node.js installed successfully.${RESET}"
+sleep 2
+
+# Install KAOKAB WebUI
+echo -e "\n${BOLD}${BLUE}Installing KAOKAB WebUI...${RESET}"
+curl -fsSL https://open5gs.org/open5gs/assets/webui/install | sudo -E bash -
+echo -e "${GREEN}✅ KAOKAB WebUI installed successfully.${RESET}"
+sleep 2
+
+# Apply Kaokab5G configurations
+echo -e "\n${BOLD}${BLUE}Applying Kaokab5G configurations...${RESET}"
+cp -fR /root/Kaokab5G/usr/lib/node_modules/open5gs/next/* /usr/lib/node_modules/open5gs/.next/
+cp -fR /root/Kaokab5G/Open5GS/* /etc/open5gs/
+echo -e "${GREEN}✅ Kaokab5G configurations applied successfully.${RESET}"
+sleep 2
+
+echo -e "\n${BOLD}${GREEN}🎉 Installation of KAOKAB and its components is complete!${RESET}"
