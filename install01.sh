@@ -1,7 +1,7 @@
 #!/bin/bash
 # CapX Core 2024 by Jeffrey Timmer | Forat Selman | Philip Prins
 # Based on open-source core
-
+#!/bin/bash
 # Define color codes for professional output
 GREEN="\e[32m"
 RED="\e[31m"
@@ -22,8 +22,14 @@ case $issue in
         ;;
 esac
 
+# Prompt the user to press Enter to continue or Ctrl+C to exit
+echo -e "${BLUE}Press Enter to continue or Ctrl+C to exit...${RESET}"
+read -r
+
+# Check if the OS is Ubuntu 22.04 and print the confirmation message
 if [ "$OS" = "ubuntu2204" ]; then
     echo -e "${GREEN}✅ Your server meets the standard specifications of Ubuntu 22.04${RESET}"
+fi
 
     # Install required packages
     sudo apt install -y vim net-tools ca-certificates curl gnupg nodejs iputils-ping git software-properties-common iptables netplan
@@ -31,7 +37,7 @@ if [ "$OS" = "ubuntu2204" ]; then
     systemctl restart systemd-networkd
     systemctl enable systemd-networkd
 
-    # Install MongoDB
+    # Install MongoDB if it's not running
     echo -e "${BOLD}${BLUE}Installing MongoDB...${RESET}"
     sudo apt update
     sudo apt install -y gnupg
@@ -41,7 +47,8 @@ if [ "$OS" = "ubuntu2204" ]; then
     sudo apt install -y mongodb-org
     sudo systemctl start mongod
     sudo systemctl enable mongod
-
+    echo -e "${GREEN}✅ MongoDB has been successfully installed and started.${RESET}"
+fi
     # Clone the Kaokab5G repository
     git clone https://github.com/Kaokab1979/Kaokab5G.git
 
