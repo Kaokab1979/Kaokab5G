@@ -1,7 +1,7 @@
 # Kaokab5G
 The Kaokab5G represents a cutting-edge Evolved Packet Core (EPC) and 5G Core (5GC) solution designed to cater to the unique requirements of Private LTE and 5G networks, completely compliant with 3GPP Release 16 standards. Built on the robust foundation of the Open5GS core.
 #Tailored Enhancements for Capx Products
-The Capx Core extends the capabilities of Open5GS with several enhancements specifically designed to optimize performance and integration with Capx's suite of products. These enhancements include:
+The Kaokab extends the capabilities of Open5GS with several enhancements specifically designed to optimize performance and integration with Capx's suite of products. These enhancements include:
 
 Customized Interface Adaptations: Capx Core features customized interfaces that ensure seamless integration with Capx's hardware and software solutions. This results in optimized data flows and reduced latency, critical for applications requiring real-time communication and high throughput.
 
@@ -22,4 +22,4 @@ Healthcare: Ensuring secure and reliable communication for medical devices and p
 Energy and Utilities: Facilitating efficient and secure communication for smart grid and utility management systems.
 Enterprises: Offering high-performance connectivity for corporate campuses, ensuring secure communication and data transfer.
 Conclusion
-The Capx Core stands out as a specialized EPC solution for Private LTE and 5G networks, combining the strengths of the Open5GS core with tailored enhancements for Capx products. Its advanced features and optimizations make it an ideal choice for enterprises and industries seeking to deploy secure, reliable, and high-performance private networks. As the demand for private LTE and 5G networks continues to grow, the Capx Core is poised to play a pivotal role in shaping the future of enterprise connectivity.
+The Capx Core stands out as a specialized EPC solution for Private LTE and 5G networks, combining the strengths of the Open5GS core with tailored enhancements for Kaokab products. Its advanced features and optimizations make it an ideal choice for enterprises and industries seeking to deploy secure, reliable, and high-performance private networks. As the demand for private LTE and 5G networks continues to grow, the Capx Core is poised to play a pivotal role in shaping the future of enterprise connectivity.
