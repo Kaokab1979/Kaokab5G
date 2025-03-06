@@ -1,7 +1,7 @@
 #!/bin/bash
 # CapX Core 2024 by Jeffrey Timmer | Forat Selman | Philip Prins
 # Based on open-source core
-#!/bin/bash
+
 # Define color codes for professional output
 GREEN="\e[32m"
 RED="\e[31m"
@@ -29,8 +29,7 @@ read -r
 # Check if the OS is Ubuntu 22.04 and print the confirmation message
 if [ "$OS" = "ubuntu2204" ]; then
     echo -e "${GREEN}✅ Your server meets the standard specifications of Ubuntu 22.04${RESET}"
-fi
-
+    
     # Install required packages
     sudo apt install -y vim net-tools ca-certificates curl gnupg nodejs iputils-ping git software-properties-common iptables netplan
     systemctl enable systemd-networkd
@@ -48,7 +47,7 @@ fi
     sudo systemctl start mongod
     sudo systemctl enable mongod
     echo -e "${GREEN}✅ MongoDB has been successfully installed and started.${RESET}"
-fi
+
     # Clone the Kaokab5G repository
     git clone https://github.com/Kaokab1979/Kaokab5G.git
 
@@ -137,7 +136,7 @@ EOF
 
     # Check the status of all Open5GS services
     echo -e "${BOLD}${BLUE}Checking KAOKAB Services Status...${RESET}"
-    open5gs_status=$(sudo systemctl is-active open5gs-*)
+    open5gs_status=$(sudo systemctl is-active open5gs-* )
     if echo "$open5gs_status" | grep -q "inactive\|failed"; then
         echo -e "${RED}❌ ERROR: Some KAOKAB services are not running!${RESET}"
         echo -e "${RED}Check the status below:${RESET}"
@@ -168,6 +167,7 @@ EOF
     echo -e "${GREEN}4.${RESET} Click the ${BOLD}SAVE${RESET} button."
 
     echo -e "\n${GREEN}✅ Setup completed successfully!${RESET} 🚀"
+
 else
     echo -e "${RED}❌ Unsupported OS. Only Ubuntu 22.04 is supported.${RESET}"
     exit 1
