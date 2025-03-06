@@ -40,9 +40,9 @@ mme:
     integrity_order : [ EIA2, EIA1, EIA0 ]
     ciphering_order : [ EEA0, EEA1, EEA2 ]
   network_name:
-    full: ICTimmers
-    short: ICTimmers
-  mme_name: open5gs-mme0
+    full: Kaokab4G
+    short: Kaokab4G
+  mme_name: Kaokab-mme0
   time:
 #    t3402:
 #      value: 720   # 12 minutes * 60 = 720 seconds
