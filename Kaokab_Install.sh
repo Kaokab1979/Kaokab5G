@@ -931,4 +931,3 @@ sleep 2
 
 # End of script
 echo -e "\n${BOLD}${GREEN}Installation completed successfully!${RESET}"
-root@kaokab:~#
