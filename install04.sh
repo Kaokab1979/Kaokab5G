@@ -83,7 +83,8 @@ read -p "${BOLD}APN Gateway IP (IPv4): ${RESET}" apngateway1
 # Netplan configuration file creation
 echo -e "\n${BOLD}${BLUE}Generating the netplan configuration file...${RESET}"
 
-cat <<EOL > /etc/netplan/00-installer-config.yaml
+# Create the netplan configuration file
+cat <<EOL | sudo tee /etc/netplan/00-installer-config.yaml > /dev/null
 network:
   ethernets:
     $interface:
@@ -99,6 +100,7 @@ network:
        addresses: [$dns1, $dns2]
   version: 2
 EOL
+
 # Give user a moment to review
 sleep 3
 
@@ -108,7 +110,7 @@ echo -e "${BOLD}${GREEN}If yes, press Enter. If no, press Ctrl+C to exit.${RESET
 read -r
 
 # Backup the current netplan configuration
-cp /etc/netplan/00-installer-config.yaml /etc/netplan/00-installer-config.yaml.bak
+sudo cp /etc/netplan/00-installer-config.yaml /etc/netplan/00-installer-config.yaml.bak
 echo -e "\n${BOLD}${GREEN}✅ Backup created at /etc/netplan/00-installer-config.yaml.bak${RESET}"
 sleep 2
 
@@ -121,8 +123,6 @@ sleep 3
 
 # Confirm netplan was applied successfully
 echo -e "\n${BOLD}${GREEN}✅ Netplan configuration applied successfully!${RESET}"
-# Display success message
-echo -e "\n${BOLD}${GREEN}✅ Netplan configuration successfully generated for interface $interface!${RESET}"
 # Install required packages
 echo -e "\n${BOLD}${BLUE}Step 1: Installing required system packages...${RESET}"
 sudo apt update
