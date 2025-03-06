@@ -282,23 +282,23 @@ amf:
         port: 9090
   guami:
     - plmn_id:
-        mcc: 204
-        mnc: 25
+        mcc: $mcc
+        mnc: $mnc
       amf_id:
-        region: 2
-        set: 1
+        region: $region    
+        set: $set
   tai:
     - plmn_id:
-        mcc: 204
-        mnc: 25
-      tac: 1
+        mcc: $mcc
+        mnc: $mnc
+      tac: $tac
   plmn_support:
     - plmn_id:
-        mcc: 204
-        mnc: 25
+        mcc: $mcc
+        mnc: $mnc
       s_nssai:
-          sst: 1
-          sd: 010203
+          sst: $sst
+          sd: $sd
   security:
     integrity_order : [ NIA2, NIA1, NIA0 ]
     ciphering_order : [ NEA0, NEA1, NEA2 ]
@@ -313,7 +313,7 @@ amf:
       value: 540    # 9 minutes * 60 = 540 seconds
 EOL
 # AUSF configuratie
-    cat <<EOL > /etc/open5gs/ausf.yaml               # Fixing directory name from /Open5GS/  to  /open5gs/
+    cat <<EOL > /etc/open5gs/ausf.yaml               
 logger:
   file:
     path: /var/log/open5gs/ausf.log
@@ -336,7 +336,7 @@ ausf:
         - uri: http://127.0.0.200:7777
 EOL
 # BSF configuratie
-    cat <<EOL > /etc/open5gs/bsf.yaml              # Fixing directory name from /Open5GS/  to  /open5gs/
+    cat <<EOL > /etc/open5gs/bsf.yaml              
 logger:
   file:
     path: /var/log/open5gs/bsf.log
@@ -359,7 +359,7 @@ bsf:
         - uri: http://127.0.0.200:7777
 EOL
 # HSS configuratie
-    cat <<EOL > /etc/open5gs/hss.yaml                    # Fixing directory name from /Open5GS/  to  /open5gs/
+    cat <<EOL > /etc/open5gs/hss.yaml                   
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
@@ -377,7 +377,7 @@ hss:
 #  use_mongodb_change_stream: true
 EOL
 # MME configuratie
-    cat <<EOL > /etc/open5gs/mme.yaml                       # Fixing directory name from /Open5GS/  to  /open5gs/
+    cat <<EOL > /etc/open5gs/mme.yaml                       
 logger:
   file:
     path: /var/log/open5gs/mme.log
@@ -407,15 +407,15 @@ mme:
         port: 9090
   gummei:
     - plmn_id:
-        mcc: 204
-        mnc: 25
-      mme_gid: 2
+        mcc: $mcc
+        mnc: $mnc
+      mme_gid: 2   
       mme_code: 1
   tai:
     - plmn_id:
-        mcc: 204
-        mnc: 25
-      tac: 1
+        mcc: $mcc
+        mnc: $mnc
+      tac: $tac
   security:
     integrity_order : [ EIA2, EIA1, EIA0 ]
     ciphering_order : [ EEA0, EEA1, EEA2 ]
@@ -426,7 +426,7 @@ mme:
   time:
 EOL
 # NRF configuratie
-    cat <<EOL > /etc/open5gs/nrf.yaml                   # Fixing directory name from /Open5GS/  to  /open5gs/
+    cat <<EOL > /etc/open5gs/nrf.yaml                     
 logger:
   file:
     path: /var/log/open5gs/nrf.log
@@ -440,12 +440,9 @@ global:
 nrf:
   serving:  # 5G roaming requires PLMN in NRF
     - plmn_id:
-        mcc: 204
-        mnc: 25
-    - plmn_id:
-        mcc: 206
-        mnc: 01
-  sbi:
+        mcc: $mcc
+        mnc: $mnc
+    sbi:
     server:
       - address: 127.0.0.10
         port: 7777
@@ -475,7 +472,8 @@ nssf:
       nsi:
         - uri: http://127.0.0.10:7777
           s_nssai:
-            sst: 1
+            sst: $sst
+            sd: $sd
 EOL
 # PCF configuratie
     cat <<EOL > /etc/open5gs/pcf.yaml                  # Fixing directory name from /Open5GS/  to  /open5gs/
