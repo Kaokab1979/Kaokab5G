@@ -234,7 +234,7 @@ echo -e "\n${BOLD}${GREEN}🎉 Installation of KAOKAB and its components is comp
 
     # Configure NAT rules
     echo -e "${BOLD}${BLUE}Configuring NAT rules...${RESET}"
-    sudo iptables -t nat -A POSTROUTING -s 10.45.0.0/16 ! -o ogstun -j MASQUERADE
+    sudo iptables -t nat -A POSTROUTING -s $apnpool1 ! -o ogstun -j MASQUERADE
     sudo ip6tables -t nat -A POSTROUTING -s 2001:db8:cafe::/48 ! -o ogstun -j MASQUERADE
 
     # Save iptables rules to be persistent
