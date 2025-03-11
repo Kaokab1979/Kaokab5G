@@ -259,7 +259,7 @@ sleep 2
 # Configure Network Functions
 #
 ## AMF configuratie
-    cat <<EOL > /etc/Open5gs/amf.yaml                   # Fixing directory name from /Open5GS/  to  /open5gs/
+    cat <<EOL > /etc/open5gs/amf.yaml                   
 logger:
   file:
     path: /var/log/open5gs/amf.log
