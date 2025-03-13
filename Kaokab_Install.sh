@@ -132,7 +132,11 @@ echo -e "\n${BOLD}${BLUE}Step 1: Installing required system packages...${RESET}"
 sudo apt update
 sudo apt install -y vim net-tools ca-certificates curl gnupg nodejs iputils-ping git software-properties-common iptables
 echo -e "${GREEN}✅ System packages installed.${RESET}"
-
+# Install Python and Flask
+echo -e "\n${BOLD}${BLUE}Step 2: Installing Python3 and Flask...${RESET}"
+sudo apt install -y python3 python3-pip
+pip3 install flask
+echo -e "${GREEN}✅ Python3 and Flask installed.${RESET}"
 # Enable and restart systemd-networkd
 echo -e "\n${BOLD}${BLUE}Step 2: Configuring system networking...${RESET}"
 sudo systemctl enable systemd-networkd
