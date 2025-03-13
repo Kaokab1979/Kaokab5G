@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Open5GS Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+        }
+        header {
+            background-color: #333;
+            color: white;
+            padding: 10px;
+            text-align: center;
+        }
+        .container {
+            padding: 20px;
+        }
+        .status-box {
+            padding: 10px;
+            margin: 5px;
+            display: inline-block;
+            border-radius: 5px;
+            color: white;
+        }
+        .active {
+            background-color: green;
+        }
+        .inactive {
+            background-color: red;
+        }
+        .node-list {
+            list-style-type: none;
+            padding: 0;
+        }
+        .node-list li {
+            padding: 5px;
+        }
+        .ue-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .ue-table th, .ue-table td {
+            padding: 8px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>KAOKAB EPC/5GC DASHBOARD</h1>
+    </header>
+
+    <div class="container">
+        <h2>Network Functions Status</h2>
+        <div id="nf-status">
+            {% for nf, status in nf_status.items() %}
+                <div class="status-box {{ 'active' if status == 'active' else 'inactive' }}">
+                    {{ nf.replace('open5gs-', '').replace('service', '') }} - {{ status.capitalize() }}
+                </div>
+            {% endfor %}
+        </div>
+
+        <!-- Button to refresh network functions -->
+        <button id="refresh-button">Refresh Network Functions</button>
+
+        <h2>Connected Nodes</h2>
+        <h3>eNodeBs</h3>
+        <ul class="node-list">
+            {% for node in connected_nodes['eNodeBs'] %}
+                <li>{{ node }}</li>
+            {% endfor %}
+        </ul>
+
+        <h3>gNBs</h3>
+        <ul class="node-list">
+            {% for node in connected_nodes['gNBs'] %}
+                <li>{{ node }}</li>
+            {% endfor %}
+        </ul>
+
+        <h2>Connected UEs</h2>
+        <table class="ue-table">
+            <thead>
+                <tr>
+                    <th>IMSI</th>
+                    <th>APN</th>
+                    <th>IP Address</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ue in connected_ues %}
+                    <tr>
+                        <td>{{ ue.IMSI }}</td>
+                        <td>{{ ue.APN }}</td>
+                        <td>{{ ue.IP }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        // Function to refresh network functions status via AJAX
+        $("#refresh-button").click(function() {
+            $.get("/api/nf_status", function(data) {
+                let nfStatusContainer = $("#nf-status");
+                nfStatusContainer.empty();  // Clear existing status
+
+                // Append new status to the container
+                for (const [service, status] of Object.entries(data)) {
+                    nfStatusContainer.append(`
+                        <div class="status-box ${status === 'active' ? 'active' : 'inactive'}">
+                            ${service.replace('open5gs-', '').replace('service', '')} - ${status.charAt(0).toUpperCase() + status.slice(1)}
+                        </div>
+                    `);
+                }
+            });
+        });
+    </script>
+</body>
+</html>
