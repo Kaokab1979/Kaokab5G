@@ -12,7 +12,7 @@ mme:
   freeDiameter: /etc/freeDiameter/mme.conf
   s1ap:
     server:
-      - address: 127.0.0.2
+      - address: 192.168.178.51
   gtpc:
     server:
       - address: 127.0.0.2
@@ -40,7 +40,7 @@ mme:
     integrity_order : [ EIA2, EIA1, EIA0 ]
     ciphering_order : [ EEA0, EEA1, EEA2 ]
   network_name:
-    full: I<aokab
+    full: Cap><
     short: Next
   mme_name: Kaokab-mme0
   time:
