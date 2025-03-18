@@ -712,7 +712,6 @@ sepp:
             uri: https://sepp2.localdomain:7777
             resolve: 127.0.2.252
 EOL
-EOL
 # SEPP2 configuratie
     cat <<EOL > /etc/open5gs/sepp2.yaml                      # Fixing directory name from /Open5GS/  to  /open5gs/
 logger:
