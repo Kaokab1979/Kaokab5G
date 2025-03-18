@@ -1,5 +1,5 @@
 #!/bin/bash
-# KAOKAB CORE 2025 by  | Forat Selman | 
+# CapX Core 2024 by Jeffrey Timmer | Forat Selman | Philip Prins
 # Based on open-source core
 
 # Define color codes for professional output
@@ -7,6 +7,7 @@ GREEN="\e[32m"
 RED="\e[31m"
 BLUE="\e[34m"
 BOLD="\e[1m"
+BLINK="\e[5m"
 RESET="\e[0m"
 
 # Install required packages (figlet and toilet) if not installed
@@ -19,7 +20,6 @@ fi
 display_fullscreen_message() {
     clear
     term_width=$(tput cols)
-    term_height=$(tput lines)
 
     # Define the message
     message1="WELCOME TO KAOKAB CORE"
@@ -32,20 +32,20 @@ display_fullscreen_message() {
     figlet -c -w "$term_width" "$message2"
     echo -e "${RESET}"
 
-    # Print the bottom message centered
+    # Print the blinking "Press ENTER" message in green
+    echo -e "${BOLD}${GREEN}${BLINK}"
     printf "%*s\n" $(((${#message3} + term_width) / 2)) "$message3"
-
-    # Wait for 7 seconds
-    sleep 7
-    clear
+    echo -e "${RESET}"
 }
 
 # Show the full-screen welcome message
 display_fullscreen_message
 
-# Prompt user to press Enter to continue
-echo -e "${BOLD}${BLUE}Press ENTER to proceed with the installation of CapX Core...${RESET}"
+# Wait for user to press Enter
 read -r
+
+# Clear screen and continue installation
+clear
 
 # Continue with the rest of the script...
 
@@ -69,36 +69,58 @@ input_box() {
 
 # The script continues...
 
+
 # Echo message before checking the OS
-echo -e "${BOLD}${BLUE}Checking the OS version...${RESET}"
+clear
+term_width=$(tput cols)
+
+# Centered function for large messages
+centered_message() {
+    local message=$1
+    printf "%*s\n" $(((${#message} + term_width) / 2)) "$message"
+}
+
+# Show centered "Checking OS" message before clearing
+echo -e "${BOLD}${BLUE}"
+centered_message "========================================"
+centered_message "Checking the OS version..."
+centered_message "========================================"
+echo -e "${RESET}"
+
+# Get OS version
 issue=$(head -n 1 /etc/issue 2>/dev/null)
 
 # OS check
 if [[ "$issue" == Ubuntu\ 22.04* ]]; then
     OS=ubuntu2204
-    # Large, clear success message
+    sleep 2
     echo -e "\n${GREEN}"
-    echo "=================================================="
-    echo "✅  YOUR SERVER MEETS THE STANDARD SPECIFICATIONS"
-    echo "                OF UBUNTU 22.04                   "
-    echo "=================================================="
-    echo -e "${RESET}"
+    centered_message "=================================================="
+    centered_message "✅  YOUR SERVER MEETS THE STANDARD SPECIFICATIONS"
+    centered_message "                OF UBUNTU 22.04                   "
+    centered_message "=================================================="
+    echo -e "${RESET}\n"
 
-    # Prompt user to continue
-    echo -e "${BOLD}${BLUE}Press ENTER to proceed with the installation.${RESET}"
-    read -r
-else
-    # Large error message if OS does not meet requirements
-    echo -e "\n${RED}"
-    echo "=================================================="
-    echo "❌ ERROR: UNSUPPORTED OPERATING SYSTEM DETECTED!"
-    echo "      INSTALLATION CAN ONLY RUN ON UBUNTU 22.04   "
-    echo "=================================================="
+    # Blinking "Press ENTER" message
+    echo -e "${BOLD}${GREEN}${BLINK}"
+    centered_message "Press ENTER to proceed with the installation."
     echo -e "${RESET}"
+    read -r
+    clear
+else
+    clear
+    echo -e "\n${RED}"
+    centered_message "=================================================="
+    centered_message "❌ ERROR: UNSUPPORTED OPERATING SYSTEM DETECTED!"
+    centered_message "      INSTALLATION CAN ONLY RUN ON UBUNTU 22.04   "
+    centered_message "=================================================="
+    echo -e "${RESET}\n"
 
     # Instruction to verify and exit
-    echo -e "${BOLD}${RED}Please verify your OS version and try again.${RESET}"
-    echo -e "${BOLD}${RED}Press Ctrl+C to exit.${RESET}"
+    echo -e "${BOLD}${RED}"
+    centered_message "Please verify your OS version and try again."
+    centered_message "Press Ctrl+C to exit."
+    echo -e "${RESET}"
     exit 1
 fi
 
@@ -107,9 +129,10 @@ echo -e "\n${BOLD}${BLUE}Please enter the following details for your network set
 
 # Ask for interface name and IPs with dialog input box
 interface=$(input_box "Enter the network interface name (e.g., enp0s25 or eth0)")
-s1ap_ip=$(input_box "Enter the IP address for the S1AP/N2 interface (Control Plane) - Example: 192.168.1.2/24")
-gtpu_ip=$(input_box "Enter the IP address for the GTPU/N3 interface (User Plane) - Example: 192.168.1.6/24")
-upf_ip=$(input_box "Enter the IP address for the UPF interface (User Plane Function) - Example: 192.168.1.7/24")
+s1ap_ip=$(input_box "Enter the IP address for the S1AP/N2 interface (Control Plane) - Example: 192.168.1.2")
+gtpu_ip=$(input_box "Enter the IP address for the GTPU/N3 interface (User Plane) - Example: 192.168.1.6")
+upf_ip=$(input_box "Enter the IP address for the UPF interface (User Plane Function) - Example: 192.168.1.7")
+cidr=$(input_box "Enter the network CIDR (network mask) - Example: 24,22 or 16  ")
 gateway=$(input_box "Enter the gateway IP address - Example: 192.168.1.254")
 dns1=$(input_box "Enter DNS1 IP address - Example: 1.0.0.1")
 dns2=$(input_box "Enter DNS2 IP address - Example: 1.1.1.1")
@@ -125,8 +148,26 @@ sd=$(input_box "Enter the SD (Slice Differentiator) - Example: 010203")
 tac=$(input_box "Enter the TAC (Tracking Area Code) - Example: 1")
 region=$(input_box "Enter the Guami AMF region - Example: region 2")
 set=$(input_box "Enter the Guami set - Example: set 1")
-# Netplan configuration file creation
-echo -e "\n${BOLD}${BLUE}Generating the netplan configuration file...${RESET}"
+
+clear
+
+# Function to display a blinking centered message
+blinking_message() {
+    local message=$1
+    term_width=$(tput cols)
+
+    for i in {1..5}; do  # Blink 5 times
+        clear
+        echo -e "${BOLD}${BLUE}"
+        printf "%*s\n" $(((${#message} + term_width) / 2)) "$message"
+        echo -e "${RESET}"
+        sleep 0.7
+    done
+}
+
+# Netplan configuration file creation with blinking effect
+blinking_message "Generating the netplan configuration file..."
+
 
 # Create the netplan configuration file
 cat <<EOL | sudo tee /etc/netplan/00-installer-config.yaml > /dev/null
@@ -135,9 +176,9 @@ network:
     $interface:
       dhcp4: no
       addresses:
-       - $s1ap_ip
-       - $gtpu_ip
-       - $upf_ip
+       - $s1ap_ip/$cidr
+       - $gtpu_ip/$cidr
+       - $upf_ip/$cidr
       routes:
         - to: default
           via: $gateway
@@ -149,25 +190,58 @@ EOL
 # Give user a moment to review
 sleep 3
 
+# Function to display centered messages
+centered_message() {
+    local message=$1
+    term_width=$(tput cols)
+    printf "%*s\n" $(((${#message} + term_width) / 2)) "$message"
+}
+
 # Ask if the user wants to back up the netplan configuration
-echo -e "\n${BOLD}${BLUE}Would you like to backup the current netplan configuration before applying?${RESET}"
-echo -e "${BOLD}${GREEN}If yes, press Enter. If no, press Ctrl+C to exit.${RESET}"
+clear
+echo -e "\n${BOLD}${BLUE}"
+centered_message "==============================================="
+centered_message "Would you like to backup the current netplan"
+centered_message "configuration before applying?"
+centered_message "==============================================="
+echo -e "${RESET}"
+
+echo -e "${BOLD}${GREEN}"
+centered_message "If yes, press Enter. If no, press Ctrl+C to exit."
+echo -e "${RESET}"
 read -r
+clear
 
 # Backup the current netplan configuration
 sudo cp /etc/netplan/00-installer-config.yaml /etc/netplan/00-installer-config.yaml.bak
-echo -e "\n${BOLD}${GREEN}✅ Backup created at /etc/netplan/00-installer-config.yaml.bak${RESET}"
+clear
+echo -e "\n${BOLD}${GREEN}"
+centered_message "==============================================="
+centered_message "✅ Backup created at:"
+centered_message "/etc/netplan/00-installer-config.yaml.bak"
+centered_message "==============================================="
+echo -e "${RESET}"
 sleep 2
+clear
 
 # Apply the new netplan configuration
-echo -e "\n${BOLD}${BLUE}Applying the new netplan configuration...${RESET}"
+echo -e "\n${BOLD}${BLUE}"
+centered_message "==============================================="
+centered_message "Applying the new netplan configuration..."
+centered_message "==============================================="
+echo -e "${RESET}"
 sudo netplan apply
-
-# Give time for the system to apply the settings
 sleep 3
+clear
 
 # Confirm netplan was applied successfully
-echo -e "\n${BOLD}${GREEN}✅ Netplan configuration applied successfully!${RESET}"
+echo -e "\n${BOLD}${GREEN}"
+centered_message "==============================================="
+centered_message "✅ Netplan configuration applied successfully!"
+centered_message "==============================================="
+echo -e "${RESET}"
+sleep 2
+clear
 
 
 # Install required packages
@@ -175,11 +249,7 @@ echo -e "\n${BOLD}${BLUE}Step 1: Installing required system packages...${RESET}"
 sudo apt update
 sudo apt install -y vim net-tools ca-certificates curl gnupg nodejs iputils-ping git software-properties-common iptables
 echo -e "${GREEN}✅ System packages installed.${RESET}"
-# Install Python and Flask
-echo -e "\n${BOLD}${BLUE}Step 2: Installing Python3 and Flask...${RESET}"
-sudo apt install -y python3 python3-pip
-pip3 install flask
-echo -e "${GREEN}✅ Python3 and Flask installed.${RESET}"
+
 # Enable and restart systemd-networkd
 echo -e "\n${BOLD}${BLUE}Step 2: Configuring system networking...${RESET}"
 sudo systemctl enable systemd-networkd
@@ -302,11 +372,11 @@ echo -e "\e[1;5;32m   KAOKAB5G is configuring Network Functions   \e[0m"
 echo -e "\e[1;5;32m========================================\e[0m"
 
 # Wait for 3 seconds to show the message
-sleep 2
+sleep 3
 # Configure Network Functions
 #
 ## AMF configuratie
-    cat <<EOL > /etc/open5gs/amf.yaml                   
+    cat <<EOL > /etc/open5gs/amf.yaml
 logger:
   file:
     path: /var/log/open5gs/amf.log
@@ -339,7 +409,7 @@ amf:
         mcc: $mcc
         mnc: $mnc
       amf_id:
-        region: $region    
+        region: $region
         set: $set
   tai:
     - plmn_id:
@@ -367,7 +437,7 @@ amf:
       value: 540    # 9 minutes * 60 = 540 seconds
 EOL
 # AUSF configuratie
-    cat <<EOL > /etc/open5gs/ausf.yaml               
+    cat <<EOL > /etc/open5gs/ausf.yaml
 logger:
   file:
     path: /var/log/open5gs/ausf.log
@@ -390,7 +460,7 @@ ausf:
         - uri: http://127.0.0.200:7777
 EOL
 # BSF configuratie
-    cat <<EOL > /etc/open5gs/bsf.yaml              
+    cat <<EOL > /etc/open5gs/bsf.yaml
 logger:
   file:
     path: /var/log/open5gs/bsf.log
@@ -413,7 +483,7 @@ bsf:
         - uri: http://127.0.0.200:7777
 EOL
 # HSS configuratie
-    cat <<EOL > /etc/open5gs/hss.yaml                   
+    cat <<EOL > /etc/open5gs/hss.yaml
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
@@ -431,7 +501,7 @@ hss:
 #  use_mongodb_change_stream: true
 EOL
 # MME configuratie
-    cat <<EOL > /etc/open5gs/mme.yaml                       
+    cat <<EOL > /etc/open5gs/mme.yaml
 logger:
   file:
     path: /var/log/open5gs/mme.log
@@ -463,7 +533,7 @@ mme:
     - plmn_id:
         mcc: $mcc
         mnc: $mnc
-      mme_gid: 2   
+      mme_gid: 2
       mme_code: 1
   tai:
     - plmn_id:
@@ -480,7 +550,7 @@ mme:
   time:
 EOL
 # NRF configuratie
-    cat <<EOL > /etc/open5gs/nrf.yaml                     
+    cat <<EOL > /etc/open5gs/nrf.yaml
 logger:
   file:
     path: /var/log/open5gs/nrf.log
@@ -496,7 +566,7 @@ nrf:
     - plmn_id:
         mcc: $mcc
         mnc: $mnc
-    sbi:
+  sbi:
     server:
       - address: 127.0.0.10
         port: 7777
