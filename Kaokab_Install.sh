@@ -1,5 +1,5 @@
 #!/bin/bash
-# CapX Core 2024 by Jeffrey Timmer | Forat Selman | Philip Prins
+# KAOKAB CORE 2025 by  | Forat Selman | 
 # Based on open-source core
 
 # Define color codes for professional output
@@ -8,6 +8,46 @@ RED="\e[31m"
 BLUE="\e[34m"
 BOLD="\e[1m"
 RESET="\e[0m"
+
+# Install required packages (figlet and toilet) if not installed
+if ! command -v figlet &> /dev/null || ! command -v toilet &> /dev/null; then
+    echo -e "${BOLD}${RED}Installing required packages (figlet, toilet)...${RESET}"
+    sudo apt-get install figlet toilet -y
+fi
+
+# Function to display a full-screen welcome message
+display_fullscreen_message() {
+    clear
+    term_width=$(tput cols)
+    term_height=$(tput lines)
+
+    # Define the message
+    message1="WELCOME TO KAOKAB CORE"
+    message2="SET UP YOUR PRIVATE LTE/5G NETWORK"
+    message3="Press ENTER to proceed with the installation of CapX Core"
+
+    # Center and display messages
+    echo -e "${BOLD}${BLUE}"
+    figlet -c -w "$term_width" "$message1"
+    figlet -c -w "$term_width" "$message2"
+    echo -e "${RESET}"
+
+    # Print the bottom message centered
+    printf "%*s\n" $(((${#message3} + term_width) / 2)) "$message3"
+
+    # Wait for 7 seconds
+    sleep 7
+    clear
+}
+
+# Show the full-screen welcome message
+display_fullscreen_message
+
+# Prompt user to press Enter to continue
+echo -e "${BOLD}${BLUE}Press ENTER to proceed with the installation of CapX Core...${RESET}"
+read -r
+
+# Continue with the rest of the script...
 
 # Install dialog if not installed
 if ! command -v dialog &> /dev/null; then
@@ -24,8 +64,11 @@ input_box() {
     user_input=$(dialog --title "$prompt_message" --inputbox "$prompt_message" 10 60 2>&1 >/dev/tty)
 
     # Return the user input
-    echo $user_input
+    echo "$user_input"
 }
+
+# The script continues...
+
 # Echo message before checking the OS
 echo -e "${BOLD}${BLUE}Checking the OS version...${RESET}"
 issue=$(head -n 1 /etc/issue 2>/dev/null)
