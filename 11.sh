@@ -470,4 +470,23 @@ EOF
 
 # Run Block03
 block03_netplan
+# ============================================================
+# Execution control (single-run blocks)
+# ============================================================
+
+RUN_BLOCK01=true
+RUN_BLOCK02=false   # already completed
+RUN_BLOCK03=true
+
+if [[ "$RUN_BLOCK01" == "true" ]]; then
+  block01_foundation
+fi
+
+if [[ "$RUN_BLOCK02" == "true" ]]; then
+  block02_collect_config
+fi
+
+if [[ "$RUN_BLOCK03" == "true" ]]; then
+  block03_netplan
+fi
 
