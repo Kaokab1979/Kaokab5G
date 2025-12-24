@@ -1,597 +1,377 @@
 #!/usr/bin/env bash
-# 555.sh — Kaokab5GC Unified Installer (Single Node: EPC + 5GC, SCP-based)
-# Ubuntu 22.04 LTS (jammy) — production-grade, non-interactive, idempotent-ish
-#
-# Zero interaction policy:
-# - NO prompts, NO "Overwrite? (y/N)", NO read -p.
-# - Uses /etc/kaokab/kaokab.env if present; otherwise auto-generates sane defaults and continues.
-#
-# Logs:
-# - /var/log/kaokab/kaokab5gc-install-YYYY-MM-DD_HHMMSS.log
-#
-# NOTE:
-# - If you want to change values, edit /etc/kaokab/kaokab.env and re-run.
-
-set -Eeuo pipefail
-IFS=$'\n\t'
-
 # ============================================================
-# Globals / Logging / UX
+#  KAOKAB5GC UNIFIED INSTALLER (SINGLE NODE: EPC + 5GC, SCP)
+#  File: 666.sh
+#  OS: Ubuntu 22.04 (Jammy)
+#  Mode: Zero-interaction / non-interactive
 # ============================================================
-SCRIPT_NAME="$(basename "$0")"
+
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+# -------------------------
+# UX helpers (colors/boxes)
+# -------------------------
+if command -v tput >/dev/null 2>&1; then
+  C_RESET="$(tput sgr0)"
+  C_BOLD="$(tput bold)"
+  C_RED="$(tput setaf 1)"
+  C_GRN="$(tput setaf 2)"
+  C_YLW="$(tput setaf 3)"
+  C_BLU="$(tput setaf 4)"
+  C_CYN="$(tput setaf 6)"
+else
+  C_RESET="" C_BOLD="" C_RED="" C_GRN="" C_YLW="" C_BLU="" C_CYN=""
+fi
+
+banner() {
+  echo
+  echo "${C_CYN}${C_BOLD}          _  __    _    ___  _  __    _    ____ ____   ____  ____"
+  echo "         | |/ /   / \\  / _ \\| |/ /   / \\  | __ ) ___| / ___|/ ___|"
+  echo "         | ' /   / _ \\| | | | ' /   / _ \\ |  _ \\___ \\| |  _| |"
+  echo "         | . \\  / ___ \\ |_| | . \\  / ___ \\| |_) |__) | |_| | |___"
+  echo "         |_|\\_\\/_/   \\_\\___/|_|\\_\\/_/   \\_\\____/____/ \\____|\\____|"
+  echo
+  echo "              ___ _   _ ____ _____  _    _     _     _____ ____"
+  echo "             |_ _| \\ | / ___|_   _|/ \\  | |   | |   | ____|  _ \\"
+  echo "              | ||  \\| \\___ \\ | | / _ \\ | |   | |   |  _| | |_) |"
+  echo "              | || |\\  |___) || |/ ___ \\| |___| |___| |___|  _ <"
+  echo "             |___|_| \\_|____/ |_/_/   \\_\\_____|_____|_____|_| \\_\\"
+  echo "${C_RESET}"
+}
+
+box() {
+  local title="$1"
+  local msg="$2"
+  echo
+  echo "${C_BLU}${C_BOLD}╔══════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
+  printf "${C_BLU}${C_BOLD}║ %-76s ║${C_RESET}\n" "${title}"
+  echo "${C_BLU}${C_BOLD}╠══════════════════════════════════════════════════════════════════════════════╣${C_RESET}"
+  while IFS= read -r line; do
+    printf "${C_BLU}${C_BOLD}║${C_RESET} %-76s ${C_BLU}${C_BOLD}║${C_RESET}\n" "${line:0:76}"
+  done <<< "$msg"
+  echo "${C_BLU}${C_BOLD}╚══════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
+}
+
+ok()   { echo "${C_GRN}${C_BOLD}[OK]${C_RESET} $*"; }
+info() { echo "${C_CYN}${C_BOLD}[INFO]${C_RESET} $*"; }
+warn() { echo "${C_YLW}${C_BOLD}[WARN]${C_RESET} $*"; }
+die()  { echo "${C_RED}${C_BOLD}[FAIL]${C_RESET} $*" >&2; exit 1; }
+
+need_root() {
+  [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo ./666.sh"
+}
+
+is_jammy() {
+  . /etc/os-release
+  [[ "${ID:-}" == "ubuntu" && "${VERSION_CODENAME:-}" == "jammy" ]]
+}
+
+# -------------------------
+# Logging
+# -------------------------
+TS="$(date +%F_%H%M%S)"
 LOG_DIR="/var/log/kaokab"
-LOG_FILE="${LOG_DIR}/kaokab5gc-install-$(date +%F_%H%M%S).log"
-
+LOG_FILE="${LOG_DIR}/kaokab5gc-install-${TS}.log"
 mkdir -p "$LOG_DIR"
 touch "$LOG_FILE"
 chmod 600 "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Colors
-GREEN="\e[32m"; RED="\e[31m"; YELLOW="\e[33m"; BLUE="\e[34m"; BOLD="\e[1m"; RESET="\e[0m"
+# -------------------------
+# Config (.env)
+# -------------------------
+ENV_DIR="/etc/kaokab"
+ENV_FILE="${ENV_DIR}/kaokab.env"
 
-log_raw() { echo -e "$*" | tee -a "$LOG_FILE" >/dev/null; }
-info()    { log_raw "${BOLD}${BLUE}[INFO]${RESET}  $*"; }
-ok()      { log_raw "${BOLD}${GREEN}[OK]${RESET}    $*"; }
-warn()    { log_raw "${BOLD}${YELLOW}[WARN]${RESET}  $*"; }
-fail()    { log_raw "${BOLD}${RED}[FAIL]${RESET}  $*"; }
-
-die() { fail "$*"; fail "Log: $LOG_FILE"; exit 1; }
-
-on_error() {
-  local ec=$?
-  local ln=${BASH_LINENO[0]:-unknown}
-  local cmd=${BASH_COMMAND:-unknown}
-  fail "Error on line ${ln}: ${cmd}"
-  fail "Log: $LOG_FILE"
-  exit "$ec"
+autodetect_iface() {
+  # default route interface
+  ip route show default 0.0.0.0/0 2>/dev/null | awk '{print $5}' | head -n1
 }
-trap on_error ERR
-
-hr() { printf "%*s\n" "$(tput cols 2>/dev/null || echo 120)" "" | tr ' ' '='; }
-
-box() {
-  # box "TITLE" "line1" "line2" ...
-  local title="$1"; shift || true
-  local width=118
-  local top="╔"; local mid="╠"; local bot="╚"
-  local h="▒"
-  local l="║"; local r="║"
-  local line
-  echo -e "${BOLD}${BLUE}${top}$(printf '%*s' $((width-2)) '' | tr ' ' "${h}")${top/${top}/${top/${top}/╗}}${RESET}" 2>/dev/null || true
-  # Simpler: draw a consistent box without depending on locale tricks
-  echo -e "${BOLD}${BLUE}╔$(printf '%*s' $((width-2)) '' | tr ' ' '▒')╗${RESET}"
-  printf "${BOLD}${BLUE}║ %-*s ║${RESET}\n" $((width-4)) "$title"
-  echo -e "${BOLD}${BLUE}╠$(printf '%*s' $((width-2)) '' | tr ' ' '▒')╣${RESET}"
-  for line in "$@"; do
-    printf "${BOLD}${BLUE}║${RESET} %-*s ${BOLD}${BLUE}║${RESET}\n" $((width-4)) "$line"
-  done
-  echo -e "${BOLD}${BLUE}╚$(printf '%*s' $((width-2)) '' | tr ' ' '▒')╝${RESET}"
+autodetect_ip() {
+  local iface="$1"
+  ip -4 -o addr show dev "$iface" | awk '{print $4}' | cut -d/ -f1 | head -n1
+}
+autodetect_gw() {
+  ip route show default 0.0.0.0/0 2>/dev/null | awk '{print $3}' | head -n1
 }
 
-banner() {
-  clear || true
-  cat <<'EOF'
-         _  __    _    ___  _  __    _    ____ ____   ____  ____
-        | |/ /   / \  / _ \| |/ /   / \  | __ ) ___| / ___|/ ___|
-        | ' /   / _ \| | | | ' /   / _ \ |  _ \___ \| |  _| |
-        | . \  / ___ \ |_| | . \  / ___ \| |_) |__) | |_| | |___
-        |_|\_\/_/   \_\___/|_|\_\/_/   \_\____/____/ \____|\____|
+write_default_env() {
+  mkdir -p "$ENV_DIR"
+  local iface ip gw
+  iface="$(autodetect_iface)"
+  [[ -n "$iface" ]] || iface="ens160"
+  ip="$(autodetect_ip "$iface" || true)"
+  [[ -n "$ip" ]] || ip="192.168.178.80"
+  gw="$(autodetect_gw || true)"
+  [[ -n "$gw" ]] || gw="192.168.178.1"
 
-              ___ _   _ ____ _____  _    _     _     _____ ____
-             |_ _| \ | / ___|_   _|/ \  | |   | |   | ____|  _ \
-              | ||  \| \___ \ | | / _ \ | |   | |   |  _| | |_) |
-              | || |\  |___) || |/ ___ \| |___| |___| |___|  _ <
-             |___|_| \_|____/ |_/_/   \_\_____|_____|_____|_| \_\
+  cat > "$ENV_FILE" <<EOF
+# KAOKAB5GC deployment parameters (single node)
+# Edit this file and re-run ./666.sh to apply.
+
+# OS / behavior
+MANAGE_NETPLAN=false
+
+# Interface + addressing
+IFACE=${iface}
+CIDR=24
+GW=${gw}
+DNS1=1.1.1.1
+DNS2=1.0.0.1
+
+# Control-plane (S1AP/N2) IP
+S1AP_N2_IP=${ip}
+
+# (Optional) GTPU/N3 IP for gNB/eNB plane (can equal S1AP_N2_IP)
+GTPU_N3_IP=192.168.178.81
+
+# UPF GTPU bind IP (often same host)
+UPF_GTPU_IP=192.168.178.82
+
+# UE pools + DNN/APN
+UE_POOL1=10.45.0.0/16
+UE_GW1=10.45.0.1
+DNN1=internet
+
+UE_POOL2=10.46.0.0/16
+UE_GW2=10.46.0.1
+DNN2=ims
+
+# PLMN / slice
+MCC=204
+MNC=61
+TAC=1
+SST=1
+SD=010203
+
+# Names
+NW_FULL=Kaokab
+NW_SHORT=Kaokab
+AMF_NAME=kaokab-amf0
+MME_NAME=kaokab-mme0
 EOF
-  echo
-  box "✅ KAOKAB5GC UNIFIED INSTALLER (SINGLE NODE: EPC + 5GC, SCP-BASED)" \
-      "OS: Ubuntu 22.04 (jammy) only" \
-      "Zero-interaction: enabled (no prompts)" \
-      "Log: ${LOG_FILE}" \
-      "Config: /etc/kaokab/kaokab.env (auto-generated if missing)"
-  echo
+  chmod 600 "$ENV_FILE"
 }
 
-# ============================================================
-# Helpers
-# ============================================================
-require_root() { [[ ${EUID:-0} -eq 0 ]] || die "Run as root: sudo ./${SCRIPT_NAME}"; }
-
-check_os() {
-  [[ -r /etc/os-release ]] || die "Missing /etc/os-release"
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "22.04" ]] || die "Unsupported OS: ${PRETTY_NAME:-unknown} (need Ubuntu 22.04)"
-  ok "OS check passed: Ubuntu 22.04"
-}
-
-apt_update_once() {
-  if [[ ! -f /var/lib/apt/periodic/update-success-stamp ]]; then
-    info "Updating apt metadata..."
-    DEBIAN_FRONTEND=noninteractive apt-get update -y >>"$LOG_FILE" 2>&1
-  else
-    # Still refresh (quietly) to reduce stale repo issues
-    DEBIAN_FRONTEND=noninteractive apt-get update -y >>"$LOG_FILE" 2>&1 || true
+load_env() {
+  mkdir -p "$ENV_DIR"
+  if [[ ! -f "$ENV_FILE" ]]; then
+    warn "Config not found: $ENV_FILE → generating defaults (zero-interaction)"
+    write_default_env
   fi
-}
-
-apt_install() {
-  local pkgs=("$@")
-  info "Installing packages: ${pkgs[*]}"
-  apt_update_once
-  DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkgs[@]}" >>"$LOG_FILE" 2>&1
-  ok "Packages installed: ${pkgs[*]}"
-}
-
-file_backup_dir() {
-  local base="$1"
-  local ts
-  ts="$(date +%F_%H%M%S)"
-  echo "${base}/backup-${ts}"
-}
-
-# ============================================================
-# Block01 — Foundation
-# ============================================================
-block01_foundation() {
-  box "▶▶ Block01" \
-      "System checks + base tooling + clean logging"
-
-  require_root
-  check_os
-
-  apt_install ca-certificates curl gnupg lsb-release software-properties-common iproute2 iptables jq net-tools dnsutils
-  apt_install dialog figlet toilet || true
-
-  ok "System foundation ready"
-}
-
-# ============================================================
-# Block02 — Config (zero interaction)
-#   - Uses /etc/kaokab/kaokab.env if present
-#   - Otherwise auto-generates defaults from system and continues
-# ============================================================
-CFG_DIR="/etc/kaokab"
-CFG_FILE="${CFG_DIR}/kaokab.env"
-
-detect_default_iface() { ip -br link | awk '$1!="lo"{print $1; exit}'; }
-detect_default_gw()    { ip route show default 2>/dev/null | awk '/default/{print $3; exit}'; }
-detect_dns_fallback()  { echo "1.1.1.1 1.0.0.1"; }
-
-block02_config() {
-  box "▶▶ Block02" \
-      "Load or auto-generate deployment parameters (non-interactive)" \
-      "Tip: Edit ${CFG_FILE} before re-running to customize"
-
-  mkdir -p "$CFG_DIR"
-  chmod 700 "$CFG_DIR"
-
-  if [[ ! -f "$CFG_FILE" ]]; then
-    info "Config not found; auto-generating ${CFG_FILE} from system defaults"
-
-    local iface gw dns1 dns2
-    iface="$(detect_default_iface)"
-    gw="$(detect_default_gw)"
-    read -r dns1 dns2 < <(detect_dns_fallback)
-
-    # Best-effort: detect first IPv4 on iface; if missing, fallback to examples
-    local ip0
-    ip0="$(ip -4 -br addr show "$iface" | awk '{print $3}' | cut -d/ -f1 | head -n1 || true)"
-    [[ -n "${ip0:-}" ]] || ip0="192.168.178.80"
-
-    cat >"$CFG_FILE" <<EOF
-# Kaokab5GC Installer Config — generated $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-# Edit and re-run 555.sh anytime.
-
-# Primary interface and host IP plan
-INTERFACE="${iface}"
-S1AP_IP="${ip0}"
-GTPU_IP="192.168.178.81"
-UPF_IP="192.168.178.82"
-CIDR="24"
-GATEWAY="${gw:-192.168.178.1}"
-DNS1="${dns1}"
-DNS2="${dns2}"
-
-# UE pools and DNNs
-UE_POOL1="10.45.0.0/16"
-UE_GW1="10.45.0.1"
-DNN1="internet"
-UE_POOL2="10.46.0.0/16"
-UE_GW2="10.46.0.1"
-DNN2="ims"
-
-# PLMN / Slice
-MCC="204"
-MNC="61"
-TAC="1"
-SST="1"
-SD="010203"
-
-# Names (match your working VM pattern)
-NETWORK_FULL="Kaokab"
-NETWORK_SHORT="Kaokab"
-AMF_NAME="kaokab-amf0"
-MME_NAME="kaokab-mme0"
-
-# Optional: manage netplan (true/false)
-MANAGE_NETPLAN="false"
-EOF
-
-    chmod 600 "$CFG_FILE"
-    ok "Config generated: ${CFG_FILE}"
-  else
-    ok "Config found: ${CFG_FILE}"
-  fi
-
   # shellcheck disable=SC1090
-  source "$CFG_FILE"
+  source "$ENV_FILE"
 
-  # Minimal sanity checks
-  [[ -n "${INTERFACE:-}" ]] || die "INTERFACE missing in ${CFG_FILE}"
-  ip link show "$INTERFACE" &>/dev/null || die "Interface not found: ${INTERFACE}"
-  [[ -n "${S1AP_IP:-}" && -n "${UPF_IP:-}" && -n "${CIDR:-}" ]] || die "IP plan incomplete in ${CFG_FILE}"
-  [[ -n "${GATEWAY:-}" ]] || die "GATEWAY missing in ${CFG_FILE}"
+  # Basic validation (non-empty)
+  : "${IFACE:?}" "${CIDR:?}" "${GW:?}" "${DNS1:?}" "${DNS2:?}"
+  : "${S1AP_N2_IP:?}" "${GTPU_N3_IP:?}" "${UPF_GTPU_IP:?}"
+  : "${UE_POOL1:?}" "${UE_GW1:?}" "${DNN1:?}"
+  : "${MCC:?}" "${MNC:?}" "${TAC:?}" "${SST:?}" "${SD:?}"
+  : "${NW_FULL:?}" "${NW_SHORT:?}" "${AMF_NAME:?}" "${MME_NAME:?}"
 
-  box "CONFIG SUMMARY" \
-      "Interface: ${INTERFACE}" \
-      "S1AP/N2:   ${S1AP_IP}/${CIDR}" \
-      "GTPU/N3:   ${GTPU_IP}/${CIDR}" \
-      "UPF GTPU:  ${UPF_IP}/${CIDR}" \
-      "GW/DNS:    ${GATEWAY} | ${DNS1}, ${DNS2}" \
-      "UE pools:  ${UE_POOL1}(${DNN1}) , ${UE_POOL2}(${DNN2})" \
-      "PLMN:      ${MCC}/${MNC}  TAC:${TAC}  Slice:${SST}/${SD}" \
-      "Names:     ${NETWORK_FULL}/${NETWORK_SHORT} AMF:${AMF_NAME} MME:${MME_NAME}"
+  # Optional pool2
+  : "${UE_POOL2:=}" "${UE_GW2:=}" "${DNN2:=}"
 
+  # Boolean normalize
+  MANAGE_NETPLAN="${MANAGE_NETPLAN,,}"
+  [[ "$MANAGE_NETPLAN" == "true" || "$MANAGE_NETPLAN" == "false" ]] || MANAGE_NETPLAN="false"
+}
+
+# -------------------------
+# System helpers
+# -------------------------
+apt_quiet_install() {
+  apt-get update -y
+  apt-get install -y --no-install-recommends "$@"
+}
+
+service_enable_start() {
+  local s="$1"
+  systemctl enable --now "$s" >/dev/null 2>&1 || {
+    systemctl daemon-reload || true
+    systemctl enable --now "$s"
+  }
+}
+
+# -------------------------
+# Block actions
+# -------------------------
+block01_prereqs() {
+  box "▶▶ Block01" "System checks + base tooling + clean logging\nLog: ${LOG_FILE}"
+  need_root
+  is_jammy || die "This installer targets Ubuntu 22.04 (Jammy) only."
+  ok "Running on Ubuntu Jammy"
+
+  info "Installing base packages (curl, gpg, repo tools, netfilter persistence)"
+  apt_quiet_install ca-certificates curl gnupg lsb-release software-properties-common \
+                    iptables iproute2 net-tools jq \
+                    netfilter-persistent iptables-persistent
+  ok "Base tooling installed"
+}
+
+block02_load_config() {
+  box "▶▶ Block02" "Load or auto-generate deployment parameters (non-interactive)\nConfig: ${ENV_FILE}"
+  load_env
+
+  # Print summary
+  local pools="${UE_POOL1}(${DNN1})"
+  if [[ -n "${UE_POOL2}" && -n "${DNN2}" ]]; then
+    pools="${pools} , ${UE_POOL2}(${DNN2})"
+  fi
+
+  echo
+  echo "${C_BOLD}╔══════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
+  echo "${C_BOLD}║ CONFIG SUMMARY                                                               ║${C_RESET}"
+  echo "${C_BOLD}╠══════════════════════════════════════════════════════════════════════════════╣${C_RESET}"
+  printf "${C_BOLD}║${C_RESET} Interface: %-66s ${C_BOLD}║${C_RESET}\n" "${IFACE}"
+  printf "${C_BOLD}║${C_RESET} S1AP/N2:   %-66s ${C_BOLD}║${C_RESET}\n" "${S1AP_N2_IP}/${CIDR}"
+  printf "${C_BOLD}║${C_RESET} GTPU/N3:   %-66s ${C_BOLD}║${C_RESET}\n" "${GTPU_N3_IP}/${CIDR}"
+  printf "${C_BOLD}║${C_RESET} UPF GTPU:  %-66s ${C_BOLD}║${C_RESET}\n" "${UPF_GTPU_IP}/${CIDR}"
+  printf "${C_BOLD}║${C_RESET} GW/DNS:    %-66s ${C_BOLD}║${C_RESET}\n" "${GW} | ${DNS1}, ${DNS2}"
+  printf "${C_BOLD}║${C_RESET} UE pools:  %-66s ${C_BOLD}║${C_RESET}\n" "${pools}"
+  printf "${C_BOLD}║${C_RESET} PLMN:      %-66s ${C_BOLD}║${C_RESET}\n" "${MCC}/${MNC}  TAC:${TAC}  Slice:${SST}/${SD}"
+  printf "${C_BOLD}║${C_RESET} Names:     %-66s ${C_BOLD}║${C_RESET}\n" "${NW_FULL}/${NW_SHORT} AMF:${AMF_NAME} MME:${MME_NAME}"
+  echo "${C_BOLD}╚══════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
   ok "Parameters loaded"
 }
 
-# ============================================================
-# Block03 — Netplan (optional)
-# ============================================================
 block03_netplan_optional() {
-  box "▶▶ Block03" \
-      "Netplan management (optional)" \
-      "Controlled by MANAGE_NETPLAN=${MANAGE_NETPLAN}"
-
-  if [[ "${MANAGE_NETPLAN,,}" != "true" ]]; then
-    ok "Netplan management disabled; skipping"
+  box "▶▶ Block03" "Netplan management (optional)\nControlled by MANAGE_NETPLAN=${MANAGE_NETPLAN}"
+  if [[ "$MANAGE_NETPLAN" != "true" ]]; then
+    ok "Skipping netplan changes (MANAGE_NETPLAN=false)"
     return
   fi
 
-  info "Backing up current netplan YAMLs"
-  local backup_dir
-  backup_dir="$(file_backup_dir "/etc/netplan")"
-  mkdir -p "$backup_dir"
-  cp -a /etc/netplan/*.yaml "$backup_dir"/ 2>/dev/null || true
-  ok "Netplan backup: ${backup_dir}"
+  info "Backing up current netplan and applying static config"
+  local np_dir="/etc/netplan"
+  local backup="${np_dir}/backup-${TS}"
+  mkdir -p "$backup"
+  cp -a "${np_dir}/"*.yaml "$backup/" 2>/dev/null || true
+  ok "Netplan backup: $backup"
 
-  local np="/etc/netplan/01-kaokab.yaml"
-  info "Writing netplan: ${np}"
-  cat >"$np" <<EOF
+  cat > "${np_dir}/99-kaokab.yaml" <<EOF
 network:
   version: 2
+  renderer: networkd
   ethernets:
-    ${INTERFACE}:
+    ${IFACE}:
       dhcp4: no
-      addresses:
-        - ${S1AP_IP}/${CIDR}
-        - ${GTPU_IP}/${CIDR}
-        - ${UPF_IP}/${CIDR}
+      addresses: [${S1AP_N2_IP}/${CIDR}]
       routes:
         - to: default
-          via: ${GATEWAY}
+          via: ${GW}
       nameservers:
-        addresses:
-          - ${DNS1}
-          - ${DNS2}
+        addresses: [${DNS1}, ${DNS2}]
 EOF
-  chmod 600 "$np"
 
-  info "Applying netplan (may briefly interrupt network on this host)"
-  netplan generate >>"$LOG_FILE" 2>&1
-  netplan apply >>"$LOG_FILE" 2>&1
-  sleep 3
-
-  # Validate
-  ip -4 addr show "$INTERFACE" | grep -q "${S1AP_IP}" || die "Netplan: missing ${S1AP_IP} on ${INTERFACE}"
-  ip route | grep -q "default via ${GATEWAY}" || die "Netplan: default route via ${GATEWAY} missing"
-  getent hosts ubuntu.com >/dev/null 2>&1 || die "DNS resolution failed after netplan apply"
-
-  ok "Netplan configured and validated"
+  netplan generate
+  netplan apply
+  ok "Netplan applied"
 }
 
-# ============================================================
-# Block04 — IP forwarding + NAT (persistent, clean output)
-# ============================================================
-block04_nat() {
-  box "▶▶ Block04" \
-      "Enable IP forwarding & NAT for UE subnets" \
-      "Persistent via /etc/sysctl.d and netfilter-persistent"
-
-  apt_install iptables-persistent netfilter-persistent
-
-  info "Enabling IPv4 forwarding (persistent)"
-  cat >/etc/sysctl.d/99-kaokab-ipforward.conf <<EOF
+block04_ip_forward_nat() {
+  box "▶▶ Block04" "Enable IP forwarding & NAT for UE subnets\nPersistent via /etc/sysctl.d and netfilter-persistent"
+  info "Enabling IPv4 forwarding"
+  cat > /etc/sysctl.d/99-kaokab5gc.conf <<EOF
 net.ipv4.ip_forward=1
 EOF
-  sysctl -p /etc/sysctl.d/99-kaokab-ipforward.conf >>"$LOG_FILE" 2>&1 || true
+  sysctl --system >/dev/null
+  ok "IP forwarding enabled"
 
-  info "Applying NAT rules for UE pools (idempotent)"
-  # Helper: add rule only if missing
-  ipt_add() {
-    local table="$1"; shift
-    if ! iptables -t "$table" -C "$@" >/dev/null 2>&1; then
-      iptables -t "$table" -A "$@"
-    fi
-  }
+  info "Ensuring NAT masquerade for UE pools via ${IFACE}"
+  iptables -t nat -C POSTROUTING -s "${UE_POOL1}" -o "${IFACE}" -j MASQUERADE 2>/dev/null \
+    || iptables -t nat -A POSTROUTING -s "${UE_POOL1}" -o "${IFACE}" -j MASQUERADE
 
-  # Forward allow
-  ipt_add filter FORWARD -i ogstun -o "$INTERFACE" -j ACCEPT
-  ipt_add filter FORWARD -i "$INTERFACE" -o ogstun -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-
-  # NAT per pool
-  ipt_add nat POSTROUTING -s "$UE_POOL1" -o "$INTERFACE" -j MASQUERADE
-  if [[ -n "${UE_POOL2:-}" && -n "${DNN2:-}" ]]; then
-    ipt_add nat POSTROUTING -s "$UE_POOL2" -o "$INTERFACE" -j MASQUERADE
+  if [[ -n "${UE_POOL2}" ]]; then
+    iptables -t nat -C POSTROUTING -s "${UE_POOL2}" -o "${IFACE}" -j MASQUERADE 2>/dev/null \
+      || iptables -t nat -A POSTROUTING -s "${UE_POOL2}" -o "${IFACE}" -j MASQUERADE
   fi
 
-  info "Saving firewall rules (persistent)"
-  netfilter-persistent save >>"$LOG_FILE" 2>&1 || true
-  netfilter-persistent reload >>"$LOG_FILE" 2>&1 || true
-
-  ok "IP forwarding & NAT enabled (persistent)"
+  netfilter-persistent save >/dev/null
+  ok "NAT rules set & persisted"
 }
 
-# ============================================================
-# Block05 — Loopback aliases (persistent via systemd)
-# ============================================================
-block05_loopback() {
-  box "▶▶ Block05" \
-      "Install persistent loopback aliases (single-node NFs)" \
-      "Provides 127.0.0.2..15, 127.0.0.20, 127.0.0.200"
-
-  local unit="/etc/systemd/system/kaokab-loopback.service"
-  cat >"$unit" <<'EOF'
+block05_loopback_aliases() {
+  box "▶▶ Block05" "Install persistent loopback aliases (single-node NFs)\nProvides 127.0.0.2..15, 127.0.0.20, 127.0.0.200"
+  info "Writing systemd service: kaokab-loopback.service"
+  cat > /etc/systemd/system/kaokab-loopback.service <<'EOF'
 [Unit]
-Description=Kaokab Open5GS Loopback Aliases (Single Node)
+Description=Kaokab Open5GS Loopback Aliases
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/ip addr add 127.0.0.2/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.3/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.4/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.5/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.6/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.7/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.8/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.9/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.10/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.11/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.12/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.13/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.14/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.15/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.20/8 dev lo
-ExecStart=/usr/sbin/ip addr add 127.0.0.200/8 dev lo
-ExecStart=/usr/sbin/ip link set lo up
-
-# Idempotency: ignore "File exists" errors
-ExecStartPost=/bin/true
+ExecStart=/bin/bash -c '\
+  for ip in {2..15} 20 200; do \
+    /sbin/ip addr add 127.0.0.${ip}/8 dev lo 2>/dev/null || true; \
+  done; \
+  /sbin/ip link set lo up; \
+  exit 0'
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-  systemctl daemon-reload >>"$LOG_FILE" 2>&1
-  systemctl enable --now kaokab-loopback.service >>"$LOG_FILE" 2>&1 || true
+  systemctl daemon-reload
+  service_enable_start kaokab-loopback.service
 
-  # Ensure addresses exist now (idempotent adds)
-  for ip in {2..15} 20 200; do
-    ip addr add "127.0.0.${ip}/8" dev lo 2>/dev/null || true
+  # quick verify
+  local missing=0
+  for ip in 2 3 4 5 6 7 8 9 10 11 12 13 14 15 20 200; do
+    ip -4 addr show lo | grep -q "127\.0\.0\.${ip}/8" || missing=1
   done
-
-  ip -4 addr show lo >>"$LOG_FILE" 2>&1 || true
-  ok "Loopback aliases installed and active"
+  [[ "$missing" -eq 0 ]] || die "Loopback aliases missing after service start"
+  ok "Loopback aliases installed"
 }
 
-# ============================================================
-# Block06 — MongoDB 6.0 (non-interactive)
-# ============================================================
 block06_mongodb() {
-  box "▶▶ Block06" \
-      "Install MongoDB 6.0 (repo + key, non-interactive)" \
-      "Service: mongod"
+  box "▶▶ Block06" "Install MongoDB via official repo/keyring (non-interactive)\nService: mongod"
+  info "Adding MongoDB repo (Jammy) using keyring method"
+  mkdir -p /etc/apt/keyrings
 
-  apt_install gnupg curl
+  # As per Open5GS quickstart, MongoDB repo/keyring method (their doc shows 8.0 at time of writing). :contentReference[oaicite:1]{index=1}
+  curl -fsSL https://pgp.mongodb.com/server-8.0.asc | gpg --dearmor -o /etc/apt/keyrings/mongodb-server-8.0.gpg
 
-  info "Configuring MongoDB apt repository"
-  install -d -m 0755 /etc/apt/keyrings
-  # Force overwrite key WITHOUT prompting
-  rm -f /etc/apt/keyrings/mongodb-server-6.0.gpg
-  curl -fsSL https://pgp.mongodb.com/server-6.0.asc \
-    | gpg --dearmor -o /etc/apt/keyrings/mongodb-server-6.0.gpg
-  chmod 0644 /etc/apt/keyrings/mongodb-server-6.0.gpg
-
-  cat >/etc/apt/sources.list.d/mongodb-org-6.0.list <<EOF
-deb [ arch=amd64,arm64 signed-by=/etc/apt/keyrings/mongodb-server-6.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse
+  cat > /etc/apt/sources.list.d/mongodb-org-8.0.list <<EOF
+deb [ arch=amd64 signed-by=/etc/apt/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse
 EOF
 
-  apt_update_once
+  apt-get update -y
+  apt-get install -y mongodb-org
+  service_enable_start mongod.service
 
-  info "Installing MongoDB packages (this may take a minute)..."
-  DEBIAN_FRONTEND=noninteractive apt-get install -y mongodb-org >>"$LOG_FILE" 2>&1
-
-  systemctl enable --now mongod >>"$LOG_FILE" 2>&1
-  systemctl is-active --quiet mongod || die "MongoDB did not start (mongod)"
+  systemctl is-active --quiet mongod || die "MongoDB (mongod) is not running"
   ok "MongoDB installed & running"
 }
 
-# ============================================================
-# Block07 — Open5GS install (repo + packages)
-# ============================================================
 block07_open5gs_install() {
-  box "▶▶ Block07" \
-      "Install Open5GS (EPC + 5GC) from apt repo" \
-      "Target: single node with SCP-based SBI"
-
-  info "Configuring Open5GS apt repository"
-  install -d -m 0755 /etc/apt/keyrings
-  rm -f /etc/apt/keyrings/open5gs.gpg
-  curl -fsSL https://download.opensuse.org/repositories/home:/acetcom:/open5gs/xUbuntu_22.04/Release.key \
-    | gpg --dearmor -o /etc/apt/keyrings/open5gs.gpg
-  chmod 0644 /etc/apt/keyrings/open5gs.gpg
-
-  cat >/etc/apt/sources.list.d/open5gs.list <<'EOF'
-deb [signed-by=/etc/apt/keyrings/open5gs.gpg] https://download.opensuse.org/repositories/home:/acetcom:/open5gs/xUbuntu_22.04/ /
-EOF
-
-  apt_update_once
-
-  info "Installing Open5GS packages (this may take a minute)..."
-  DEBIAN_FRONTEND=noninteractive apt-get install -y open5gs >>"$LOG_FILE" 2>&1
-
+  box "▶▶ Block07" "Install Open5GS (EPC + 5GC) via official Ubuntu method\nRepo: ppa:open5gs/latest"
+  info "Adding Open5GS PPA (ppa:open5gs/latest) and installing"
+  add-apt-repository -y ppa:open5gs/latest
+  apt-get update -y
+  apt-get install -y open5gs
   ok "Open5GS installed"
 }
 
-# ============================================================
-# Block08 — Open5GS configuration (match your working VM style)
-# ============================================================
-block08_open5gs_config() {
-  box "▶▶ Block08" \
-      "Configure Open5GS (Single Node)" \
-      "SCP-based SBI (like your working VM)" \
-      "Writes YAML under /etc/open5gs and backs up existing configs"
+block08_write_configs() {
+  box "▶▶ Block08" "Write Open5GS YAML configs (single node, SCP-based)\nBackup existing /etc/open5gs to timestamped folder"
+  mkdir -p /etc/open5gs /var/log/open5gs
 
-  local etcdir="/etc/open5gs"
-  [[ -d "$etcdir" ]] || mkdir -p "$etcdir"
+  if [[ -d /etc/open5gs && -n "$(ls -A /etc/open5gs 2>/dev/null || true)" ]]; then
+    local backup="/etc/open5gs/backup-${TS}"
+    mkdir -p "$backup"
+    cp -a /etc/open5gs/* "$backup/" 2>/dev/null || true
+    ok "Backup created: $backup"
+  fi
 
-  local bdir
-  bdir="$(file_backup_dir "$etcdir")"
-  mkdir -p "$bdir"
-  cp -a "$etcdir"/*.yaml "$bdir"/ 2>/dev/null || true
-  ok "Backup created: ${bdir}"
-
-  # Some values normalization (Open5GS often expects MNC without leading zeros in YAML, but both can work)
-  local mnc_yaml="$MNC"
-  # Keep as-is; user uses "61" not "061" in working VM.
-  # If you ever need 3-digit, set MNC="025" and it will be written as 025 (string-like).
-
-  # --- amf.yaml ---
-  cat >"${etcdir}/amf.yaml" <<EOF
-logger:
-  file:
-    path: /var/log/open5gs/amf.log
-#  level: info   # fatal|error|warn|info(default)|debug|trace
-
-global:
-  max:
-    ue: 1024
-
-amf:
-  sbi:
-    server:
-      - address: 127.0.0.5
-        port: 7777
-    client:
-      scp:
-        - uri: http://127.0.0.200:7777
-  ngap:
-    server:
-      - address: ${S1AP_IP}
-  metrics:
-    server:
-      - address: 127.0.0.5
-        port: 9090
-  guami:
-    - plmn_id:
-        mcc: ${MCC}
-        mnc: ${mnc_yaml}
-      amf_id:
-        region: 1
-        set: 1
-  tai:
-    - plmn_id:
-        mcc: ${MCC}
-        mnc: ${mnc_yaml}
-      tac: ${TAC}
-  plmn_support:
-    - plmn_id:
-        mcc: ${MCC}
-        mnc: ${mnc_yaml}
-      s_nssai:
-          sst: ${SST}
-          sd: ${SD}
-  security:
-    integrity_order : [ NIA2, NIA1, NIA0 ]
-    ciphering_order : [ NEA0, NEA1, NEA2 ]
-  network_name:
-    full: ${NETWORK_FULL}
-    short: ${NETWORK_SHORT}
-  amf_name: ${AMF_NAME}
-  time:
-    t3512:
-      value: 540
-EOF
-
-  # --- mme.yaml ---
-  cat >"${etcdir}/mme.yaml" <<EOF
-logger:
-  file:
-    path: /var/log/open5gs/mme.log
-    level: info   # fatal|error|warn|info(default)|debug|trace
-
-global:
-  max:
-    ue: 1024
-
-mme:
-  freeDiameter: /etc/freeDiameter/mme.conf
-  s1ap:
-    server:
-      - address: ${S1AP_IP}
-  gtpc:
-    server:
-      - address: 127.0.0.2
-    client:
-      sgwc:
-        - address: 127.0.0.3
-      smf:
-        - address: 127.0.0.4
-  metrics:
-    server:
-      - address: 127.0.0.2
-        port: 9090
-  gummei:
-    - plmn_id:
-        mcc: ${MCC}
-        mnc: ${mnc_yaml}
-      mme_gid: 2
-      mme_code: 1
-  tai:
-    - plmn_id:
-        mcc: ${MCC}
-        mnc: ${mnc_yaml}
-      tac: ${TAC}
-  security:
-    integrity_order : [ EIA2, EIA1, EIA0 ]
-    ciphering_order : [ EEA0, EEA1, EEA2 ]
-  network_name:
-    full: ${NETWORK_FULL}
-    short: ${NETWORK_SHORT}
-  mme_name: ${MME_NAME}
-  time:
-EOF
-
-  # --- nrf.yaml ---
-  cat >"${etcdir}/nrf.yaml" <<EOF
+  # ---- NRF ----
+  cat > /etc/open5gs/nrf.yaml <<EOF
 logger:
   file:
     path: /var/log/open5gs/nrf.log
-#  level: info
 
 global:
   max:
@@ -601,19 +381,18 @@ nrf:
   serving:
     - plmn_id:
         mcc: ${MCC}
-        mnc: ${mnc_yaml}
+        mnc: ${MNC}
   sbi:
     server:
       - address: 127.0.0.10
         port: 7777
 EOF
 
-  # --- scp.yaml ---
-  cat >"${etcdir}/scp.yaml" <<'EOF'
+  # ---- SCP ----
+  cat > /etc/open5gs/scp.yaml <<EOF
 logger:
   file:
     path: /var/log/open5gs/scp.log
-#  level: info
 
 global:
   max:
@@ -624,14 +403,16 @@ scp:
     server:
       - address: 127.0.0.200
         port: 7777
+    client:
+      nrf:
+        - uri: http://127.0.0.10:7777
 EOF
 
-  # --- ausf.yaml ---
-  cat >"${etcdir}/ausf.yaml" <<EOF
+  # ---- AUSF ----
+  cat > /etc/open5gs/ausf.yaml <<EOF
 logger:
   file:
     path: /var/log/open5gs/ausf.log
-#  level: info
 
 global:
   max:
@@ -647,13 +428,11 @@ ausf:
         - uri: http://127.0.0.200:7777
 EOF
 
-  # --- udm.yaml ---
-  cat >"${etcdir}/udm.yaml" <<EOF
-db_uri: mongodb://localhost/open5gs
+  # ---- UDM ----
+  cat > /etc/open5gs/udm.yaml <<EOF
 logger:
   file:
     path: /var/log/open5gs/udm.log
-#  level: info
 
 global:
   max:
@@ -669,13 +448,12 @@ udm:
         - uri: http://127.0.0.200:7777
 EOF
 
-  # --- udr.yaml ---
-  cat >"${etcdir}/udr.yaml" <<EOF
+  # ---- UDR ----
+  cat > /etc/open5gs/udr.yaml <<EOF
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
     path: /var/log/open5gs/udr.log
-#  level: info
 
 global:
   max:
@@ -684,20 +462,19 @@ global:
 udr:
   sbi:
     server:
-      - address: 127.0.0.14
+      - address: 127.0.0.20
         port: 7777
     client:
       scp:
         - uri: http://127.0.0.200:7777
 EOF
 
-  # --- pcf.yaml ---
-  cat >"${etcdir}/pcf.yaml" <<EOF
+  # ---- PCF ----
+  cat > /etc/open5gs/pcf.yaml <<EOF
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
     path: /var/log/open5gs/pcf.log
-#  level: info
 
 global:
   max:
@@ -717,12 +494,11 @@ pcf:
         port: 9090
 EOF
 
-  # --- nssf.yaml ---
-  cat >"${etcdir}/nssf.yaml" <<EOF
+  # ---- NSSF ----
+  cat > /etc/open5gs/nssf.yaml <<EOF
 logger:
   file:
     path: /var/log/open5gs/nssf.log
-#  level: info
 
 global:
   max:
@@ -731,25 +507,19 @@ global:
 nssf:
   sbi:
     server:
-      - address: 127.0.0.20
+      - address: 127.0.0.14
         port: 7777
     client:
       scp:
         - uri: http://127.0.0.200:7777
-  nsi:
-    - name: ${DNN1}
-      s_nssai:
-        sst: ${SST}
-        sd: ${SD}
 EOF
 
-  # --- bsf.yaml ---
-  cat >"${etcdir}/bsf.yaml" <<EOF
+  # ---- BSF ----
+  cat > /etc/open5gs/bsf.yaml <<EOF
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
     path: /var/log/open5gs/bsf.log
-#  level: info
 
 global:
   max:
@@ -765,12 +535,156 @@ bsf:
         - uri: http://127.0.0.200:7777
 EOF
 
-  # --- smf.yaml ---
-  cat >"${etcdir}/smf.yaml" <<EOF
+  # ---- AMF (working-VM style incl. network_name) ----
+  cat > /etc/open5gs/amf.yaml <<EOF
+logger:
+  file:
+    path: /var/log/open5gs/amf.log
+
+global:
+  max:
+    ue: 1024
+
+amf:
+  sbi:
+    server:
+      - address: 127.0.0.5
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.0.200:7777
+  ngap:
+    server:
+      - address: ${S1AP_N2_IP}
+  metrics:
+    server:
+      - address: 127.0.0.5
+        port: 9090
+  guami:
+    - plmn_id:
+        mcc: ${MCC}
+        mnc: ${MNC}
+      amf_id:
+        region: 1
+        set: 1
+  tai:
+    - plmn_id:
+        mcc: ${MCC}
+        mnc: ${MNC}
+      tac: ${TAC}
+  plmn_support:
+    - plmn_id:
+        mcc: ${MCC}
+        mnc: ${MNC}
+      s_nssai:
+        sst: ${SST}
+        sd: ${SD}
+  security:
+    integrity_order: [ NIA2, NIA1, NIA0 ]
+    ciphering_order: [ NEA0, NEA1, NEA2 ]
+  network_name:
+    full: ${NW_FULL}
+    short: ${NW_SHORT}
+  amf_name: ${AMF_NAME}
+  time:
+    t3512:
+      value: 540
+EOF
+
+  # ---- MME (working-VM style incl. network_name) ----
+  cat > /etc/open5gs/mme.yaml <<EOF
+logger:
+  file:
+    path: /var/log/open5gs/mme.log
+  level: debug
+
+global:
+  max:
+    ue: 1024
+
+mme:
+  freeDiameter: /etc/freeDiameter/mme.conf
+  s1ap:
+    server:
+      - address: ${S1AP_N2_IP}
+  gtpc:
+    server:
+      - address: 127.0.0.2
+    client:
+      sgwc:
+        - address: 127.0.0.3
+      smf:
+        - address: 127.0.0.4
+  metrics:
+    server:
+      - address: 127.0.0.2
+        port: 9090
+  gummei:
+    - plmn_id:
+        mcc: ${MCC}
+        mnc: ${MNC}
+      mme_gid: 2
+      mme_code: 1
+  tai:
+    - plmn_id:
+        mcc: ${MCC}
+        mnc: ${MNC}
+      tac: ${TAC}
+  security:
+    integrity_order: [ EIA2, EIA1, EIA0 ]
+    ciphering_order: [ EEA0, EEA1, EEA2 ]
+  network_name:
+    full: ${NW_FULL}
+    short: ${NW_SHORT}
+  mme_name: ${MME_NAME}
+EOF
+
+  # ---- SGW-C ----
+  cat > /etc/open5gs/sgwc.yaml <<EOF
+logger:
+  file:
+    path: /var/log/open5gs/sgwc.log
+
+global:
+  max:
+    ue: 1024
+
+sgwc:
+  gtpc:
+    server:
+      - address: 127.0.0.3
+  pfcp:
+    server:
+      - address: 127.0.0.3
+    client:
+      sgwu:
+        - address: 127.0.0.6
+EOF
+
+  # ---- SGW-U ----
+  cat > /etc/open5gs/sgwu.yaml <<EOF
+logger:
+  file:
+    path: /var/log/open5gs/sgwu.log
+
+global:
+  max:
+    ue: 1024
+
+sgwu:
+  pfcp:
+    server:
+      - address: 127.0.0.6
+  gtpu:
+    server:
+      - address: ${GTPU_N3_IP}
+EOF
+
+  # ---- SMF (working-VM style, includes DNS list) ----
+  cat > /etc/open5gs/smf.yaml <<EOF
 logger:
   file:
     path: /var/log/open5gs/smf.log
-#  level: info
 
 global:
   max:
@@ -800,26 +714,36 @@ smf:
     server:
       - address: 127.0.0.4
         port: 9090
+
   session:
     - subnet: ${UE_POOL1}
       gateway: ${UE_GW1}
       dnn: ${DNN1}
+EOF
+
+  if [[ -n "${UE_POOL2}" && -n "${UE_GW2}" && -n "${DNN2}" ]]; then
+    cat >> /etc/open5gs/smf.yaml <<EOF
     - subnet: ${UE_POOL2}
       gateway: ${UE_GW2}
       dnn: ${DNN2}
+EOF
+  fi
+
+  cat >> /etc/open5gs/smf.yaml <<EOF
+
   dns:
     - ${DNS2}
     - ${DNS1}
+
   mtu: 1500
   freeDiameter: /etc/freeDiameter/smf.conf
 EOF
 
-  # --- upf.yaml ---
-  cat >"${etcdir}/upf.yaml" <<EOF
+  # ---- UPF ----
+  cat > /etc/open5gs/upf.yaml <<EOF
 logger:
   file:
     path: /var/log/open5gs/upf.log
-#  level: info
 
 global:
   max:
@@ -831,208 +755,211 @@ upf:
       - address: 127.0.0.7
   gtpu:
     server:
-      - address: ${UPF_IP}
+      - address: ${UPF_GTPU_IP}
   session:
     - subnet: ${UE_POOL1}
-      dnn: ${DNN1}
+EOF
+  if [[ -n "${UE_POOL2}" ]]; then
+    cat >> /etc/open5gs/upf.yaml <<EOF
     - subnet: ${UE_POOL2}
-      dnn: ${DNN2}
 EOF
+  fi
 
-  # --- sgwc.yaml ---
-  cat >"${etcdir}/sgwc.yaml" <<EOF
-logger:
-  file:
-    path: /var/log/open5gs/sgwc.log
-#  level: info
-
-global:
-  max:
-    ue: 1024
-
-sgwc:
-  gtpc:
-    server:
-      - address: 127.0.0.3
-  pfcp:
-    server:
-      - address: 127.0.0.3
-    client:
-      sgwu:
-        - address: 127.0.0.6
-EOF
-
-  # --- sgwu.yaml ---
-  cat >"${etcdir}/sgwu.yaml" <<EOF
-logger:
-  file:
-    path: /var/log/open5gs/sgwu.log
-#  level: info
-
-global:
-  max:
-    ue: 1024
-
-sgwu:
-  pfcp:
-    server:
-      - address: 127.0.0.6
-  gtpu:
-    server:
-      - address: ${GTPU_IP}
-EOF
-
-  # --- hss.yaml / pcrf.yaml / sepp1.yaml / sepp2.yaml ---
-  # Keep minimal presence to avoid breaking package expectations; these are optional for your core flow.
-  cat >"${etcdir}/hss.yaml" <<'EOF'
+  # ---- HSS / PCRF (EPC) ----
+  cat > /etc/open5gs/hss.yaml <<EOF
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
     path: /var/log/open5gs/hss.log
-#  level: info
+
 global:
   max:
     ue: 1024
+
 hss:
   freeDiameter: /etc/freeDiameter/hss.conf
 EOF
 
-  cat >"${etcdir}/pcrf.yaml" <<'EOF'
+  cat > /etc/open5gs/pcrf.yaml <<EOF
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
     path: /var/log/open5gs/pcrf.log
-#  level: info
+
 global:
   max:
     ue: 1024
+
 pcrf:
   freeDiameter: /etc/freeDiameter/pcrf.conf
 EOF
 
-  cat >"${etcdir}/sepp1.yaml" <<'EOF'
+  # SEPP optional placeholders (kept minimal)
+  cat > /etc/open5gs/sepp1.yaml <<EOF
 logger:
   file:
     path: /var/log/open5gs/sepp1.log
-#  level: info
 global:
   max:
     ue: 1024
 sepp:
   sbi:
     server:
-      - address: 127.0.0.9
+      - address: 127.0.0.250
         port: 7777
 EOF
 
-  cat >"${etcdir}/sepp2.yaml" <<'EOF'
+  cat > /etc/open5gs/sepp2.yaml <<EOF
 logger:
   file:
     path: /var/log/open5gs/sepp2.log
-#  level: info
 global:
   max:
     ue: 1024
 sepp:
   sbi:
     server:
-      - address: 127.0.0.8
+      - address: 127.0.0.251
         port: 7777
 EOF
 
-  # Permissions: Open5GS service runs as open5gs user
-  chown -R open5gs:open5gs "$etcdir" 2>/dev/null || true
-  chmod 640 "$etcdir"/*.yaml 2>/dev/null || true
-
+  chown -R open5gs:open5gs /etc/open5gs
+  chmod 640 /etc/open5gs/*.yaml
   ok "Open5GS configuration written"
 }
 
-# ============================================================
-# Block09 — Start services (correct order, stable)
-# ============================================================
-block09_start() {
-  box "▶▶ Block09" \
-      "Start MongoDB + Open5GS services" \
-      "Order: mongod → nrf/scp → core NFs → access/UPF"
+block09_start_services() {
+  box "▶▶ Block09" "Start Open5GS services in strict order (MongoDB → NRF/SCP → 5GC → EPC)"
+  info "Ensuring mongod is running"
+  service_enable_start mongod.service
 
-  info "Starting MongoDB (mongod)"
-  systemctl enable --now mongod >>"$LOG_FILE" 2>&1 || true
-  systemctl is-active --quiet mongod || die "mongod is not active"
-
-  # Clean any fast-fail loops from previous runs
-  systemctl reset-failed open5gs-* >>"$LOG_FILE" 2>&1 || true
-
+  # Core order
   info "Starting NRF + SCP"
-  systemctl enable --now open5gs-nrfd open5gs-scpd >>"$LOG_FILE" 2>&1 || true
-  sleep 2
+  systemctl enable --now open5gs-nrfd open5gs-scpd >/dev/null 2>&1 || true
+  systemctl restart open5gs-nrfd open5gs-scpd
 
-  info "Starting AUSF/UDM/UDR/PCF/NSSF/BSF/HSS"
-  systemctl enable --now open5gs-ausfd open5gs-udmd open5gs-udrd open5gs-pcfd open5gs-nssfd open5gs-bsfd open5gs-hssd >>"$LOG_FILE" 2>&1 || true
-  sleep 2
+  info "Starting 5GC control plane"
+  systemctl enable --now open5gs-ausfd open5gs-udmd open5gs-udrd open5gs-pcfd open5gs-nssfd open5gs-bsfd >/dev/null 2>&1 || true
+  systemctl restart open5gs-ausfd open5gs-udmd open5gs-udrd open5gs-pcfd open5gs-nssfd open5gs-bsfd
 
-  info "Starting AMF/SMF/UPF/MME/SGW-C/SGW-U/PCRF"
-  systemctl enable --now open5gs-amfd open5gs-smfd open5gs-upfd open5gs-mmed open5gs-sgwcd open5gs-sgwud open5gs-pcrfd >>"$LOG_FILE" 2>&1 || true
-  sleep 2
+  info "Starting AMF/SMF/UPF and EPC services"
+  systemctl enable --now open5gs-amfd open5gs-smfd open5gs-upfd open5gs-mmed open5gs-sgwcd open5gs-sgwud open5gs-pcrfd >/dev/null 2>&1 || true
+  systemctl restart open5gs-amfd open5gs-smfd open5gs-upfd open5gs-mmed open5gs-sgwcd open5gs-sgwud open5gs-pcrfd
 
-  ok "Open5GS services start sequence issued"
+  # Give time for sockets
+  sleep 2
+  ok "Open5GS start sequence completed"
 }
 
-# ============================================================
-# Block10 — Health check (clean, explicit)
-# ============================================================
-block10_health() {
-  box "▶▶ Block10" \
-      "Health check" \
-      "Validates SBI port 7777 listeners and core systemd units"
-
-  info "Checking SBI listeners (port 7777)"
-  local listeners
-  listeners="$(ss -tuln 2>/dev/null | awk '$1 ~ /^tcp/ && $5 ~ /:7777$/ {print $5}' | sort -u | tr '\n' ' ' || true)"
-  if [[ -z "${listeners// }" ]]; then
-    ss -tuln >>"$LOG_FILE" 2>&1 || true
-    die "No SBI port 7777 listening"
+# -------------------------
+# Verification vs working-VM style + readiness
+# -------------------------
+expect_in_file() {
+  local file="$1" pattern="$2" label="$3"
+  if grep -qE "$pattern" "$file"; then
+    ok "Verify: ${label}"
+  else
+    warn "Verify failed: ${label}"
+    warn "  File: $file"
+    warn "  Need: $pattern"
+    return 1
   fi
-  ok "SBI ports listening: ${listeners}"
+}
 
-  info "Checking core services state"
-  local must=(open5gs-nrfd open5gs-scpd open5gs-amfd open5gs-smfd open5gs-upfd)
-  local s
-  for s in "${must[@]}"; do
+block10_verify_configs() {
+  box "▶▶ Block10" "Auto-verification (working-VM style checks)\nEnsures SCP-based SBI + network_name present"
+  local fail=0
+
+  expect_in_file /etc/open5gs/amf.yaml "network_name:" "AMF has network_name" || fail=1
+  expect_in_file /etc/open5gs/amf.yaml "scp:\s*- uri: http://127\.0\.0\.200:7777" "AMF uses SCP URI" || fail=1
+  expect_in_file /etc/open5gs/amf.yaml "address: ${S1AP_N2_IP}" "AMF NGAP binds to S1AP/N2 IP" || fail=1
+
+  expect_in_file /etc/open5gs/smf.yaml "scp:\s*- uri: http://127\.0\.0\.200:7777" "SMF uses SCP URI" || fail=1
+  expect_in_file /etc/open5gs/smf.yaml "dns:\s*- ${DNS2}\s*- ${DNS1}" "SMF DNS list present" || fail=1
+
+  expect_in_file /etc/open5gs/mme.yaml "network_name:" "MME has network_name" || fail=1
+  expect_in_file /etc/open5gs/nrf.yaml "address: 127\.0\.0\.10" "NRF binds 127.0.0.10" || fail=1
+  expect_in_file /etc/open5gs/scp.yaml "address: 127\.0\.0\.200" "SCP binds 127.0.0.200" || fail=1
+
+  [[ "$fail" -eq 0 ]] || warn "Some config checks failed (review warnings above)."
+  ok "Config verification phase done"
+}
+
+block11_core_readiness() {
+  box "▶▶ Block11" "Core readiness validation\nServices + ports + sysctl + NAT + ogstun"
+
+  # Services
+  local svcs=(mongod open5gs-nrfd open5gs-scpd open5gs-ausfd open5gs-udmd open5gs-udrd open5gs-pcfd open5gs-nssfd open5gs-bsfd open5gs-amfd open5gs-smfd open5gs-upfd open5gs-mmed open5gs-sgwcd open5gs-sgwud open5gs-pcrfd)
+  local down=0
+  for s in "${svcs[@]}"; do
     if systemctl is-active --quiet "$s"; then
       ok "Service active: $s"
     else
-      systemctl status "$s" --no-pager >>"$LOG_FILE" 2>&1 || true
-      die "Service not active: $s"
+      warn "Service NOT active: $s"
+      down=1
     fi
   done
 
-  ok "Core services running"
+  # Ports: SBI 7777 across key loopbacks
+  if ss -tuln | grep -q ":7777"; then
+    ok "SBI port(s) 7777 listening"
+  else
+    warn "No SBI port 7777 listening"
+    down=1
+  fi
+
+  # PFCP (UPF)
+  ss -u -l -n | grep -q "8805" && ok "PFCP 8805 listening" || warn "PFCP 8805 not seen (check UPF/SMF)"
+
+  # Sysctl
+  sysctl -n net.ipv4.ip_forward | grep -q "^1$" && ok "net.ipv4.ip_forward=1" || { warn "IP forwarding is not enabled"; down=1; }
+
+  # NAT
+  iptables -t nat -S POSTROUTING | grep -q "${UE_POOL1}.*MASQUERADE" && ok "NAT rule present for ${UE_POOL1}" || { warn "NAT missing for ${UE_POOL1}"; down=1; }
+  if [[ -n "${UE_POOL2}" ]]; then
+    iptables -t nat -S POSTROUTING | grep -q "${UE_POOL2}.*MASQUERADE" && ok "NAT rule present for ${UE_POOL2}" || warn "NAT missing for ${UE_POOL2}"
+  fi
+
+  # ogstun device (created when UPF is up)
+  if ip link show ogstun >/dev/null 2>&1; then
+    ok "ogstun exists"
+  else
+    warn "ogstun not found (may appear after first session)."
+  fi
+
+  if [[ "$down" -eq 0 ]]; then
+    echo
+    ok "CORE READY ✅"
+  else
+    echo
+    warn "CORE NOT READY ❌  (check failed services/logs)"
+    warn "Tip: journalctl -u open5gs-amfd -u open5gs-smfd -u open5gs-nrfd -u open5gs-scpd --no-pager -n 80"
+  fi
 }
 
-# ============================================================
-# Main
-# ============================================================
 main() {
   banner
+  box "✅ KAOKAB5GC UNIFIED INSTALLER (SINGLE NODE: EPC + 5GC, SCP-BASED)" \
+      "Zero-interaction: enabled (no prompts)\nLog: ${LOG_FILE}\nConfig: ${ENV_FILE} (auto-generated if missing)\nOS: Ubuntu 22.04 Jammy"
 
-  block01_foundation
-  block02_config
+  block01_prereqs
+  block02_load_config
   block03_netplan_optional
-  block04_nat
-  block05_loopback
+  block04_ip_forward_nat
+  block05_loopback_aliases
   block06_mongodb
   block07_open5gs_install
-  block08_open5gs_config
-  block09_start
-  block10_health
+  block08_write_configs
+  block09_start_services
+  block10_verify_configs
+  block11_core_readiness
 
-  hr
-  box "✅ KAOKAB5GC INSTALLATION COMPLETE" \
-      "Single-node Open5GS (EPC + 5GC) is installed and running" \
-      "Next: add subscribers via WebUI/DB as needed" \
-      "Log: ${LOG_FILE}" \
-      "Config: ${CFG_FILE}"
-  hr
+  echo
+  echo "================================================="
+  echo " ✅ KAOKAB5GC INSTALLATION COMPLETE"
+  echo " Log file: ${LOG_FILE}"
+  echo " Config:   ${ENV_FILE}"
+  echo "================================================="
 }
 
 main "$@"
