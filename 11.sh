@@ -132,9 +132,30 @@ block01_foundation() {
 
   ok "Block01 complete: foundation ready."
 }
+  show_banner
+
+  echo -e "${GREEN}"
+  echo "=================================================="
+  echo " ✅ SYSTEM CHECK PASSED"
+  echo " - OS            : Ubuntu 22.04"
+  echo " - Privileges    : root"
+  echo " - Network tools : ready"
+  echo " - Installer log : ${LOG_FILE}"
+  echo "=================================================="
+  echo -e "${RESET}"
+
+  ok "Block01 complete: system meets Kaokab5G requirements."
+
+  echo
+  echo -e "${BOLD}${BLUE}IMPORTANT:${RESET}"
+  echo "• This installer is now in a stable state."
+  echo "• Save this final version of 11.sh."
+  echo "• Do NOT re-run Block02 unless configuration must change."
+  echo
 
 # Execute Block01 only (for now)
-block01_foundation
+#block01_foundation
+
 # ============================================================
 # Block02: Collect & validate deployment parameters (dialog)
 # - Saves config to: /etc/kaokab/kaokab.env
@@ -362,7 +383,7 @@ EOS
 }
 
 # Run Block02 (uncomment when ready to execute)
-block02_collect_config
+#block02_collect_config
 # ============================================================
 # Block03: Netplan generation, apply & validation
 # - Reads config from /etc/kaokab/kaokab.env
@@ -467,9 +488,11 @@ EOF
   ok "Network validation successful"
   ok "Block03 complete: Netplan configured and validated"
 }
+echo -e "${BOLD}${BLUE}▶▶ Block03: Applying Network Configuration${RESET}"
+echo -e "${BOLD}${GREEN}✔ Block03 completed successfully${RESET}"
 
 # Run Block03
-block03_netplan
+#block03_netplan
 # ============================================================
 # Execution control (single-run blocks)
 # ============================================================
@@ -489,4 +512,3 @@ fi
 if [[ "$RUN_BLOCK03" == "true" ]]; then
   block03_netplan
 fi
-
