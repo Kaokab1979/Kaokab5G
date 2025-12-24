@@ -315,16 +315,23 @@ ExecStart=/bin/bash -c '\
 WantedBy=multi-user.target
 EOF
 
-  systemctl daemon-reload
-  service_enable_start kaokab-loopback.service
+ systemctl daemon-reload
+service_enable_start kaokab-loopback.service
 
-  # quick verify
-  local missing=0
+# bounded wait for kernel to apply addresses
+local ok_all=0
+for _ in {1..10}; do
+  ok_all=1
   for ip in 2 3 4 5 6 7 8 9 10 11 12 13 14 15 20 200; do
-    ip -4 addr show lo | grep -q "127\.0\.0\.${ip}/8" || missing=1
+    ip -4 addr show lo | grep -q "127\.0\.0\.${ip}/8" || ok_all=0
   done
-  [[ "$missing" -eq 0 ]] || die "Loopback aliases missing after service start"
-  ok "Loopback aliases installed"
+  [[ "$ok_all" -eq 1 ]] && break
+  sleep 0.3
+done
+
+[[ "$ok_all" -eq 1 ]] || die "Loopback aliases missing after service start"
+ok "Loopback aliases installed"
+
 }
 
 block06_mongodb() {
