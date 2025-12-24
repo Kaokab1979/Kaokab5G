@@ -363,4 +363,111 @@ EOS
 
 # Run Block02 (uncomment when ready to execute)
 block02_collect_config
+# ============================================================
+# Block03: Netplan generation, apply & validation
+# - Reads config from /etc/kaokab/kaokab.env
+# ============================================================
+
+block03_netplan() {
+  info "Starting Block03: Netplan configuration"
+
+  # ----------------------------
+  # Load configuration
+  # ----------------------------
+  if [[ ! -f /etc/kaokab/kaokab.env ]]; then
+    fail "Missing config file /etc/kaokab/kaokab.env (run Block02 first)"
+    exit 1
+  fi
+  # shellcheck disable=SC1091
+  source /etc/kaokab/kaokab.env
+  ok "Loaded configuration from /etc/kaokab/kaokab.env"
+
+  # ----------------------------
+  # Validate interface exists
+  # ----------------------------
+  if ! ip link show "$INTERFACE" &>/dev/null; then
+    fail "Interface $INTERFACE does not exist"
+    exit 1
+  fi
+
+  # ----------------------------
+  # Backup existing netplan
+  # ----------------------------
+  NETPLAN_DIR="/etc/netplan"
+  BACKUP_DIR="/etc/netplan/backup-$(date +%F_%H%M%S)"
+  mkdir -p "$BACKUP_DIR"
+  cp -a ${NETPLAN_DIR}/*.yaml "$BACKUP_DIR"/ 2>/dev/null || true
+  ok "Netplan backup created at $BACKUP_DIR"
+
+  # ----------------------------
+  # Generate Kaokab netplan
+  # ----------------------------
+  KAOKAB_NETPLAN="${NETPLAN_DIR}/01-kaokab.yaml"
+  info "Generating Netplan file: $KAOKAB_NETPLAN"
+
+  cat >"$KAOKAB_NETPLAN" <<EOF
+network:
+  version: 2
+  ethernets:
+    ${INTERFACE}:
+      dhcp4: no
+      addresses:
+        - ${S1AP_IP}/${CIDR}
+        - ${GTPU_IP}/${CIDR}
+        - ${UPF_IP}/${CIDR}
+      routes:
+        - to: default
+          via: ${GATEWAY}
+      nameservers:
+        addresses:
+          - ${DNS1}
+          - ${DNS2}
+EOF
+
+  chmod 600 "$KAOKAB_NETPLAN"
+  ok "Netplan file written"
+
+  # ----------------------------
+  # Apply netplan safely
+  # ----------------------------
+  info "Applying Netplan configuration"
+  netplan generate >>"$LOG_FILE" 2>&1
+  netplan apply >>"$LOG_FILE" 2>&1
+  sleep 3
+  ok "Netplan applied"
+
+  # ----------------------------
+  # Validation checks
+  # ----------------------------
+  info "Validating network state"
+
+  # Interface UP
+  ip link show "$INTERFACE" | grep -q "state UP" || {
+    fail "Interface $INTERFACE is not UP"
+    exit 1
+  }
+
+  # IPs present
+  ip -4 addr show "$INTERFACE" | grep -q "$S1AP_IP" || fail "Missing S1AP IP"
+  ip -4 addr show "$INTERFACE" | grep -q "$GTPU_IP" || fail "Missing GTPU IP"
+  ip -4 addr show "$INTERFACE" | grep -q "$UPF_IP"  || fail "Missing UPF IP"
+
+  # Default route
+  ip route | grep -q "default via ${GATEWAY}" || {
+    fail "Default route via ${GATEWAY} not present"
+    exit 1
+  }
+
+  # DNS resolution test
+  if ! getent hosts ubuntu.com &>/dev/null; then
+    fail "DNS resolution failed"
+    exit 1
+  fi
+
+  ok "Network validation successful"
+  ok "Block03 complete: Netplan configured and validated"
+}
+
+# Run Block03
+block03_netplan
 
