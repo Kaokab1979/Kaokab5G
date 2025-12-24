@@ -115,7 +115,7 @@ EOS
   ok "Loopback alias service installed and started (kaokab-loopback.service)"
 }
 
-write_yaml(){
+write_yaml() {
   local f="$1"; shift
   cat >"/etc/open5gs/$f" <<EOF
 $*
