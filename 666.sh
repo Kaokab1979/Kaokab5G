@@ -225,9 +225,8 @@ install_open5gs() {
   apt-get update -y
 
   # packages
-  apt-get install -y \
-    open5gs open5gs-webui \
-    freeDiameter
+  aapt-get install -y open5gs freediameter
+
 
   ok "Open5GS packages installed"
 }
