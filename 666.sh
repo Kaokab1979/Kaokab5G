@@ -230,6 +230,8 @@ install_open5gs() {
 
   ok "Open5GS packages installed"
 }
+info "WebUI not installed automatically (recommended for production)"
+info "If needed, install WebUI separately using NodeJS"
 
 # ---------- Open5GS config (SCP-based) ----------
 write_open5gs_configs() {
