@@ -135,3 +135,232 @@ block01_foundation() {
 
 # Execute Block01 only (for now)
 block01_foundation
+# ============================================================
+# Block02: Collect & validate deployment parameters (dialog)
+# - Saves config to: /etc/kaokab/kaokab.env
+# ============================================================
+
+KAOKAB_CFG_DIR="/etc/kaokab"
+KAOKAB_CFG_FILE="${KAOKAB_CFG_DIR}/kaokab.env"
+
+ensure_dialog() {
+  command -v dialog >/dev/null 2>&1 || apt_install dialog
+}
+
+dialog_input() {
+  local title="$1"
+  local prompt="$2"
+  local default="${3:-}"
+  local out
+
+  out=$(dialog --clear --stdout --title "$title" \
+      --inputbox "$prompt" 10 70 "$default") || {
+        clear || true
+        fail "Cancelled by user."
+        exit 1
+      }
+  echo "$out"
+}
+
+dialog_msg() {
+  local title="$1"
+  local msg="$2"
+  dialog --clear --title "$title" --msgbox "$msg" 12 70
+}
+
+is_iface() {
+  local ifc="$1"
+  ip link show "$ifc" &>/dev/null
+}
+
+is_ipv4() {
+  local ip="$1"
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS='.' read -r a b c d <<<"$ip"
+  [[ "$a" -le 255 && "$b" -le 255 && "$c" -le 255 && "$d" -le 255 ]]
+}
+
+is_cidr() {
+  local cidr="$1"
+  [[ "$cidr" =~ ^[0-9]{1,2}$ ]] && [[ "$cidr" -ge 1 && "$cidr" -le 32 ]]
+}
+
+is_mcc() { [[ "$1" =~ ^[0-9]{3}$ ]]; }
+is_mnc() { [[ "$1" =~ ^[0-9]{2,3}$ ]]; }
+is_tac() { [[ "$1" =~ ^[0-9]{1,5}$ ]]; }
+is_sst() { [[ "$1" =~ ^[0-9]{1,3}$ ]]; }   # 1..255 typical, keep flexible
+is_sd()  { [[ "$1" =~ ^[0-9A-Fa-f]{6}$ ]]; } # 3 bytes hex (e.g., 010203)
+
+write_cfg() {
+  mkdir -p "$KAOKAB_CFG_DIR"
+  chmod 700 "$KAOKAB_CFG_DIR"
+  cat >"$KAOKAB_CFG_FILE" <<EOF
+# Kaokab5G Installer Config
+# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+INTERFACE="${INTERFACE}"
+S1AP_IP="${S1AP_IP}"
+GTPU_IP="${GTPU_IP}"
+UPF_IP="${UPF_IP}"
+CIDR="${CIDR}"
+GATEWAY="${GATEWAY}"
+DNS1="${DNS1}"
+DNS2="${DNS2}"
+APN_POOL="${APN_POOL}"
+APN_GW="${APN_GW}"
+MCC="${MCC}"
+MNC="${MNC}"
+SST="${SST}"
+SD="${SD}"
+TAC="${TAC}"
+GUAMI_REGION="${GUAMI_REGION}"
+GUAMI_SET="${GUAMI_SET}"
+EOF
+  chmod 600 "$KAOKAB_CFG_FILE"
+  ok "Saved config to ${KAOKAB_CFG_FILE}"
+}
+
+block02_collect_config() {
+  ensure_dialog
+
+  # Suggest defaults from current system
+  local default_iface
+  default_iface="$(ip -br link | awk '$1!="lo"{print $1; exit}')"
+  local default_gw
+  default_gw="$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}')"
+  local default_dns1="1.1.1.1"
+  local default_dns2="1.0.0.1"
+
+  while :; do
+    INTERFACE="$(dialog_input "Kaokab5G Setup" "Enter network interface name (e.g., ens160, eth0)" "$default_iface")"
+    if is_iface "$INTERFACE"; then break; fi
+    dialog_msg "Invalid" "Interface '$INTERFACE' not found. Check: ip -br link"
+  done
+
+  # Control/User-plane IPs (you can keep these on same NIC as you do now)
+  while :; do
+    S1AP_IP="$(dialog_input "IP Plan" "Enter S1AP/N2 (Control Plane) IPv4 (e.g., 192.168.178.80)" "")"
+    is_ipv4 "$S1AP_IP" && break
+    dialog_msg "Invalid" "Invalid IPv4 address."
+  done
+
+  while :; do
+    GTPU_IP="$(dialog_input "IP Plan" "Enter GTP-U/N3 (User Plane) IPv4 (e.g., 192.168.178.81)" "")"
+    is_ipv4 "$GTPU_IP" && break
+    dialog_msg "Invalid" "Invalid IPv4 address."
+  done
+
+  while :; do
+    UPF_IP="$(dialog_input "IP Plan" "Enter UPF GTP-U bind IPv4 (e.g., 192.168.178.82)" "")"
+    is_ipv4 "$UPF_IP" && break
+    dialog_msg "Invalid" "Invalid IPv4 address."
+  done
+
+  while :; do
+    CIDR="$(dialog_input "IP Plan" "Enter CIDR mask (1-32) (e.g., 24)" "24")"
+    is_cidr "$CIDR" && break
+    dialog_msg "Invalid" "CIDR must be 1..32"
+  done
+
+  while :; do
+    GATEWAY="$(dialog_input "Routing" "Enter default gateway IPv4" "$default_gw")"
+    is_ipv4 "$GATEWAY" && break
+    dialog_msg "Invalid" "Invalid IPv4 address."
+  done
+
+  while :; do
+    DNS1="$(dialog_input "DNS" "Enter DNS1 IPv4" "$default_dns1")"
+    is_ipv4 "$DNS1" && break
+    dialog_msg "Invalid" "Invalid IPv4 address."
+  done
+
+  while :; do
+    DNS2="$(dialog_input "DNS" "Enter DNS2 IPv4" "$default_dns2")"
+    is_ipv4 "$DNS2" && break
+    dialog_msg "Invalid" "Invalid IPv4 address."
+  done
+
+  # Subscriber pool
+  while :; do
+    APN_POOL="$(dialog_input "Subscriber Pool" "Enter APN pool in CIDR (e.g., 10.45.0.0/16)" "10.45.0.0/16")"
+    [[ "$APN_POOL" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]] && break
+    dialog_msg "Invalid" "Format must be like 10.45.0.0/16"
+  done
+
+  while :; do
+    APN_GW="$(dialog_input "Subscriber Pool" "Enter APN gateway IPv4 (e.g., 10.45.0.1)" "10.45.0.1")"
+    is_ipv4 "$APN_GW" && break
+    dialog_msg "Invalid" "Invalid IPv4 address."
+  done
+
+  # PLMN / Slice
+  while :; do
+    MCC="$(dialog_input "PLMN" "Enter MCC (3 digits) e.g., 204" "204")"
+    is_mcc "$MCC" && break
+    dialog_msg "Invalid" "MCC must be exactly 3 digits."
+  done
+
+  while :; do
+    MNC="$(dialog_input "PLMN" "Enter MNC (2 or 3 digits) e.g., 61 or 025" "61")"
+    is_mnc "$MNC" && break
+    dialog_msg "Invalid" "MNC must be 2 or 3 digits."
+  done
+
+  while :; do
+    SST="$(dialog_input "Slice" "Enter SST (e.g., 1)" "1")"
+    is_sst "$SST" && break
+    dialog_msg "Invalid" "SST must be numeric."
+  done
+
+  while :; do
+    SD="$(dialog_input "Slice" "Enter SD (6 hex digits) e.g., 010203" "010203")"
+    is_sd "$SD" && break
+    dialog_msg "Invalid" "SD must be 6 hex digits."
+  done
+
+  while :; do
+    TAC="$(dialog_input "Tracking Area" "Enter TAC (e.g., 1)" "1")"
+    is_tac "$TAC" && break
+    dialog_msg "Invalid" "TAC must be numeric."
+  done
+
+  GUAMI_REGION="$(dialog_input "GUAMI" "Enter AMF GUAMI region (numeric) e.g., 2" "2")"
+  GUAMI_SET="$(dialog_input "GUAMI" "Enter AMF GUAMI set (numeric) e.g., 1" "1")"
+
+  # Show summary (review)
+  local summary
+  summary=$(
+    cat <<EOS
+Interface:   ${INTERFACE}
+
+S1AP/N2:     ${S1AP_IP}/${CIDR}
+GTPU/N3:     ${GTPU_IP}/${CIDR}
+UPF GTPU:    ${UPF_IP}/${CIDR}
+Gateway:     ${GATEWAY}
+DNS:         ${DNS1}, ${DNS2}
+
+APN Pool:    ${APN_POOL}
+APN GW:      ${APN_GW}
+
+PLMN:        MCC ${MCC} / MNC ${MNC}
+Slice:       SST ${SST} / SD ${SD}
+TAC:         ${TAC}
+GUAMI:       region ${GUAMI_REGION} / set ${GUAMI_SET}
+EOS
+  )
+
+  dialog --clear --title "Review Configuration" --yesno "$summary" 22 72
+  if [[ $? -ne 0 ]]; then
+    clear || true
+    warn "User chose to re-enter values."
+    block02_collect_config
+    return
+  fi
+
+  clear || true
+  write_cfg
+  ok "Block02 complete: parameters collected & saved."
+}
+
+# Run Block02 (uncomment when ready to execute)
+block02_collect_config
+
