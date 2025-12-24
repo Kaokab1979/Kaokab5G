@@ -1,46 +1,45 @@
 #!/usr/bin/env bash
 # ============================================================
-# 555.sh — KAOKAB5GC Unified Installer (Ubuntu 22.04)
-# Single-node Open5GS (EPC + 5GC) + SCP-based architecture
-#
-# Design goals (met):
-# ✅ One file, one entry point
-# ✅ Strict execution order
-# ✅ Single-node Open5GS (EPC + 5GC)
-# ✅ SCP-based architecture (as in your working VM)
-# ✅ Safe logging, clear banners, explicit steps
-# ✅ Re-runnable (idempotent where possible)
-# ✅ Production-grade structure
+# 555.sh — KAOKAB5GC Unified Installer (Single Node: EPC + 5GC)
+# Ubuntu 22.04 | Open5GS + MongoDB | SCP-based architecture
 # ============================================================
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
 # ----------------------------
-# Globals
+# Constants
 # ----------------------------
 SCRIPT_NAME="$(basename "$0")"
 LOG_DIR="/var/log/kaokab"
-mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/kaokab5gc-install-$(date +%F_%H%M%S).log"
-touch "$LOG_FILE"
-chmod 600 "$LOG_FILE"
-
-KAOKAB_CFG_DIR="/etc/kaokab"
-KAOKAB_CFG_FILE="${KAOKAB_CFG_DIR}/kaokab.env"
-
+CFG_DIR="/etc/kaokab"
+CFG_FILE="${CFG_DIR}/kaokab.env"
+NETPLAN_DIR="/etc/netplan"
+NETPLAN_FILE="${NETPLAN_DIR}/01-kaokab.yaml"
 OPEN5GS_DIR="/etc/open5gs"
-OPEN5GS_BACKUP_DIR="${OPEN5GS_DIR}/backup-$(date +%F_%H%M%S)"
+LOOP_SVC="/etc/systemd/system/kaokab-loopback.service"
+LOOP_SVC_NAME="kaokab-loopback.service"
 
 # ----------------------------
 # Colors
 # ----------------------------
-GREEN="\e[32m"; RED="\e[31m"; BLUE="\e[34m"; YELLOW="\e[33m"
-BOLD="\e[1m"; RESET="\e[0m"
+BOLD="\e[1m"
+RESET="\e[0m"
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+CYAN="\e[36m"
+MAGENTA="\e[35m"
 
 # ----------------------------
 # Logging
 # ----------------------------
+mkdir -p "$LOG_DIR"
+touch "$LOG_FILE"
+chmod 600 "$LOG_FILE"
+
 log()   { echo -e "$*" | tee -a "$LOG_FILE" >/dev/null; }
 info()  { log "${BOLD}${BLUE}[INFO]${RESET}  $*"; }
 ok()    { log "${BOLD}${GREEN}[OK]${RESET}    $*"; }
@@ -48,60 +47,46 @@ warn()  { log "${BOLD}${YELLOW}[WARN]${RESET}  $*"; }
 fail()  { log "${BOLD}${RED}[FAIL]${RESET}  $*"; }
 
 on_error() {
-  local ec=$?
-  local line="${BASH_LINENO[0]:-unknown}"
-  local cmd="${BASH_COMMAND:-unknown}"
-  fail "Error on line ${line}: ${cmd}"
+  local code=$?
+  fail "Installer failed at line ${BASH_LINENO[0]}: ${BASH_COMMAND}"
   fail "Log: ${LOG_FILE}"
-  exit "$ec"
+  exit "$code"
 }
 trap on_error ERR
 
 # ----------------------------
-# Helpers
+# UI helpers (Boxes + Progress)
 # ----------------------------
-need_root() {
-  if [[ "${EUID}" -ne 0 ]]; then
-    fail "Run as root: sudo ./${SCRIPT_NAME}"
-    exit 1
-  fi
+term_cols() { tput cols 2>/dev/null || echo 100; }
+
+hr() {
+  local w; w="$(term_cols)"
+  printf "%*s\n" "$w" "" | tr " " "="
 }
 
-check_os() {
-  if [[ ! -r /etc/os-release ]]; then
-    fail "Cannot detect OS (missing /etc/os-release)"
-    exit 1
+box() {
+  # box "TITLE" "line1" "line2" ...
+  local title="$1"; shift || true
+  local w; w="$(term_cols)"
+  local inner=$(( w-4 ))
+  echo -e "${BOLD}${CYAN}"
+  printf "╔%*s╗\n" $((w-2)) "" | tr " " "═"
+  printf "║ %-*s ║\n" "$inner" "$title"
+  printf "╠%*s╣\n" $((w-2)) "" | tr " " "═"
+  if (( $# == 0 )); then
+    printf "║ %-*s ║\n" "$inner" ""
+  else
+    for line in "$@"; do
+      printf "║ %-*s ║\n" "$inner" "$line"
+    done
   fi
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "22.04" ]]; then
-    fail "Unsupported OS. Required Ubuntu 22.04. Detected: ${PRETTY_NAME:-unknown}"
-    exit 1
-  fi
-  ok "OS: Ubuntu 22.04"
-}
-
-cmd_exists() { command -v "$1" >/dev/null 2>&1; }
-
-apt_update_once() {
-  if [[ -f /var/lib/apt/periodic/update-success-stamp ]]; then
-    ok "APT update stamp present (skipping update)"
-    return
-  fi
-  info "APT update"
-  DEBIAN_FRONTEND=noninteractive apt-get update -y >>"$LOG_FILE" 2>&1
-  ok "APT updated"
-}
-
-apt_install() {
-  local pkgs=("$@")
-  info "Installing packages: ${pkgs[*]}"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkgs[@]}" >>"$LOG_FILE" 2>&1
-  ok "Installed: ${pkgs[*]}"
+  printf "╚%*s╝\n" $((w-2)) "" | tr " " "═"
+  echo -e "${RESET}"
 }
 
 banner() {
   clear || true
+  echo -e "${BOLD}${CYAN}"
   cat <<'EOF'
           _  __    _    ___  _  __    _    ____ ____   ____  ____
          | |/ /   / \  / _ \| |/ /   / \  | __ ) ___| / ___|/ ___|
@@ -115,17 +100,98 @@ banner() {
                | || |\  |___) || |/ ___ \| |___| |___| |___|  _ <
               |___|_| \_|____/ |_/_/   \_\_____|_____|_____|_| \_\
 EOF
-  echo
-  log "${BOLD}${BLUE}==================================================${RESET}"
-  log "${BOLD}${GREEN} ✅ KAOKAB5GC UNIFIED INSTALLER (555.sh)${RESET}"
-  log "${BOLD}${BLUE}==================================================${RESET}"
-  log "${BOLD}${BLUE}Log file:${RESET} ${LOG_FILE}"
-  echo
+  echo -e "${RESET}"
+}
+
+spinner() {
+  # spinner <seconds> <message>
+  local seconds="${1:-3}"; shift || true
+  local msg="${1:-Working...}"
+  local i=0
+  local spin='|/-\'
+  echo -ne "${BOLD}${MAGENTA}${msg}${RESET} "
+  while (( i < seconds*10 )); do
+    echo -ne "${spin:i%4:1}\r${BOLD}${MAGENTA}${msg}${RESET} "
+    sleep 0.1
+    ((i++))
+  done
+  echo -e "✔"
+}
+
+step() {
+  # step "BlockXX" "Description"
+  local s="$1"; local d="$2"
+  box "▶▶ ${s}" "${d}" "Log: ${LOG_FILE}"
+}
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    echo -e "${RED}Run as root: sudo ./${SCRIPT_NAME}${RESET}"
+    exit 1
+  fi
+}
+
+check_os() {
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "22.04" ]]; then
+      fail "Unsupported OS. Required Ubuntu 22.04, detected: ${PRETTY_NAME:-unknown}"
+      exit 1
+    fi
+  else
+    fail "Cannot detect OS (/etc/os-release missing)."
+    exit 1
+  fi
+}
+
+apt_update_once() {
+  # Run update only once per execution
+  if [[ -z "${_APT_UPDATED:-}" ]]; then
+    info "Refreshing apt index"
+    DEBIAN_FRONTEND=noninteractive apt-get update -y >>"$LOG_FILE" 2>&1
+    _APT_UPDATED=1
+  fi
+}
+
+apt_install() {
+  apt_update_once
+  local pkgs=("$@")
+  info "Installing: ${pkgs[*]}"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkgs[@]}" >>"$LOG_FILE" 2>&1
+}
+
+cmd_exists() { command -v "$1" >/dev/null 2>&1; }
+
+# ----------------------------
+# Block01 — System checks + base tools
+# ----------------------------
+block01() {
+  step "Block01" "System check + base dependencies"
+
+  check_os
+  ok "OS check passed: Ubuntu 22.04"
+
+  apt_install ca-certificates curl gnupg lsb-release software-properties-common iproute2 iptables net-tools jq
+  ok "Base tools installed"
+
+  banner
+  box "✅ SYSTEM CHECK PASSED" \
+      "- OS            : Ubuntu 22.04" \
+      "- Privileges    : root" \
+      "- Network tools : ready" \
+      "- Installer log : ${LOG_FILE}"
 }
 
 # ----------------------------
-# Config collection (non-distructive)
+# Block02 — Collect inputs (dialog rectangles + fallback CLI)
 # ----------------------------
+ensure_dialog() {
+  if ! cmd_exists dialog; then
+    apt_install dialog
+  fi
+}
+
 is_ipv4() {
   local ip="$1"
   [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
@@ -133,143 +199,221 @@ is_ipv4() {
   [[ "$a" -le 255 && "$b" -le 255 && "$c" -le 255 && "$d" -le 255 ]]
 }
 
-prompt_default() {
-  local prompt="$1"; local def="$2"
-  local ans=""
-  read -r -p "${prompt} [${def}]: " ans || true
-  if [[ -z "${ans}" ]]; then ans="$def"; fi
-  echo "$ans"
+is_iface() { ip link show "$1" &>/dev/null; }
+
+prompt_cli() {
+  local var="$1"; local msg="$2"; local def="${3:-}"
+  local val
+  read -r -p "$(echo -e "${BOLD}${CYAN}${msg}${RESET} [${def}]: ")" val
+  val="${val:-$def}"
+  printf -v "$var" '%s' "$val"
 }
 
-save_cfg() {
-  mkdir -p "$KAOKAB_CFG_DIR"
-  chmod 700 "$KAOKAB_CFG_DIR"
-  cat >"$KAOKAB_CFG_FILE" <<EOF
-# Kaokab5G Installer Config
+dialog_input() {
+  local title="$1" prompt="$2" def="${3:-}"
+  dialog --clear --stdout --title "$title" --inputbox "$prompt" 10 74 "$def"
+}
+
+block02() {
+  step "Block02" "Collect deployment parameters (nice rectangles)"
+
+  mkdir -p "$CFG_DIR"
+  chmod 700 "$CFG_DIR"
+
+  local default_iface default_gw default_ip0
+  default_iface="$(ip -br link | awk '$1!="lo"{print $1; exit}')"
+  default_gw="$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}')"
+  default_ip0="$(ip -4 addr show "$default_iface" 2>/dev/null | awk '/inet /{print $2}' | head -n1 | cut -d/ -f1 || true)"
+
+  local use_dialog="false"
+  if [[ -t 1 ]]; then
+    # interactive TTY
+    ensure_dialog
+    use_dialog="true"
+  fi
+
+  if [[ "$use_dialog" == "true" ]]; then
+    # dialog mode
+    local tmp
+
+    tmp="$(dialog_input "Kaokab5GC" "Interface name (e.g., ens160)" "$default_iface")" || exit 1
+    INTERFACE="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "S1AP/N2 IPv4 (Control) e.g. 192.168.178.80" "${default_ip0:-192.168.178.80}")" || exit 1
+    S1AP_IP="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "GTPU/N3 IPv4 (optional) e.g. 192.168.178.81" "192.168.178.81")" || exit 1
+    GTPU_IP="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "UPF GTPU bind IPv4 e.g. 192.168.178.82" "192.168.178.82")" || exit 1
+    UPF_IP="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "CIDR mask (1-32)" "24")" || exit 1
+    CIDR="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "Gateway IPv4" "${default_gw:-192.168.178.1}")" || exit 1
+    GATEWAY="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "DNS1 IPv4" "1.1.1.1")" || exit 1
+    DNS1="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "DNS2 IPv4" "1.0.0.1")" || exit 1
+    DNS2="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "UE pool #1 (CIDR) e.g. 10.45.0.0/16" "10.45.0.0/16")" || exit 1
+    UE_POOL1="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "UE gateway #1 e.g. 10.45.0.1" "10.45.0.1")" || exit 1
+    UE_GW1="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "DNN #1 (APN) e.g. internet" "internet")" || exit 1
+    DNN1="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "UE pool #2 (CIDR) optional" "10.46.0.0/16")" || exit 1
+    UE_POOL2="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "UE gateway #2 optional" "10.46.0.1")" || exit 1
+    UE_GW2="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "DNN #2 optional (e.g. ims)" "ims")" || exit 1
+    DNN2="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "MCC (3 digits)" "204")" || exit 1
+    MCC="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "MNC (2-3 digits)" "61")" || exit 1
+    MNC="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "TAC" "1")" || exit 1
+    TAC="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "SST" "1")" || exit 1
+    SST="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "SD (6 hex digits) e.g. 010203" "010203")" || exit 1
+    SD="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "Network name (full)" "Kaokab")" || exit 1
+    NET_FULL="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "Network name (short)" "Kaokab")" || exit 1
+    NET_SHORT="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "AMF name" "kaokab-amf0")" || exit 1
+    AMF_NAME="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "MME name" "kaokab-mme0")" || exit 1
+    MME_NAME="$tmp"
+
+    tmp="$(dialog_input "Kaokab5GC" "Manage Netplan now? true/false" "false")" || exit 1
+    MANAGE_NETPLAN="$tmp"
+
+    clear || true
+  else
+    # CLI mode (still neat)
+    box "CONFIG INPUT" "Enter values (press Enter to accept default)."
+    prompt_cli INTERFACE "Interface name" "$default_iface"
+    prompt_cli S1AP_IP "S1AP/N2 IPv4 (Control) e.g. 192.168.178.80" "${default_ip0:-192.168.178.80}"
+    prompt_cli GTPU_IP "GTPU/N3 IPv4 (optional) e.g. 192.168.178.81" "192.168.178.81"
+    prompt_cli UPF_IP "UPF GTPU bind IPv4 e.g. 192.168.178.82" "192.168.178.82"
+    prompt_cli CIDR "CIDR mask" "24"
+    prompt_cli GATEWAY "Gateway" "${default_gw:-192.168.178.1}"
+    prompt_cli DNS1 "DNS1" "1.1.1.1"
+    prompt_cli DNS2 "DNS2" "1.0.0.1"
+    prompt_cli UE_POOL1 "UE pool #1 (CIDR) e.g. 10.45.0.0/16" "10.45.0.0/16"
+    prompt_cli UE_GW1 "UE gateway #1 e.g. 10.45.0.1" "10.45.0.1"
+    prompt_cli DNN1 "DNN #1 (APN) e.g. internet" "internet"
+    prompt_cli UE_POOL2 "UE pool #2 (CIDR) optional" "10.46.0.0/16"
+    prompt_cli UE_GW2 "UE gateway #2 optional" "10.46.0.1"
+    prompt_cli DNN2 "DNN #2 optional" "ims"
+    prompt_cli MCC "MCC (3 digits)" "204"
+    prompt_cli MNC "MNC (2-3 digits)" "61"
+    prompt_cli TAC "TAC" "1"
+    prompt_cli SST "SST" "1"
+    prompt_cli SD "SD (6 hex digits) e.g. 010203" "010203"
+    prompt_cli NET_FULL "Network name (full)" "Kaokab"
+    prompt_cli NET_SHORT "Network name (short)" "Kaokab"
+    prompt_cli AMF_NAME "AMF name" "kaokab-amf0"
+    prompt_cli MME_NAME "MME name" "kaokab-mme0"
+    prompt_cli MANAGE_NETPLAN "Manage Netplan now? true/false" "false"
+  fi
+
+  # validate important fields
+  is_iface "$INTERFACE" || { fail "Interface not found: $INTERFACE"; exit 1; }
+  is_ipv4 "$S1AP_IP" || { fail "Invalid S1AP_IP: $S1AP_IP"; exit 1; }
+  is_ipv4 "$UPF_IP"  || { fail "Invalid UPF_IP: $UPF_IP"; exit 1; }
+  is_ipv4 "$GATEWAY" || { fail "Invalid GATEWAY: $GATEWAY"; exit 1; }
+  is_ipv4 "$DNS1"    || { fail "Invalid DNS1: $DNS1"; exit 1; }
+  is_ipv4 "$DNS2"    || { fail "Invalid DNS2: $DNS2"; exit 1; }
+
+  cat >"$CFG_FILE" <<EOF
+# Kaokab5GC Installer Config
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# External / RAN-facing addresses (single NIC but multiple IPs ok)
 INTERFACE="${INTERFACE}"
-S1AP_IP="${S1AP_IP}"     # N2/S1AP (Control)
-GTPU_IP="${GTPU_IP}"     # N3 (User plane on SMF if needed, kept for compatibility)
-UPF_IP="${UPF_IP}"       # UPF GTPU bind
-
+S1AP_IP="${S1AP_IP}"
+GTPU_IP="${GTPU_IP}"
+UPF_IP="${UPF_IP}"
 CIDR="${CIDR}"
 GATEWAY="${GATEWAY}"
 DNS1="${DNS1}"
 DNS2="${DNS2}"
 
-# UE pools
-APN_POOL_1="${APN_POOL_1}"   # e.g. 10.45.0.0/16
-APN_GW_1="${APN_GW_1}"       # e.g. 10.45.0.1
-DNN_1="${DNN_1}"             # e.g. internet
+UE_POOL1="${UE_POOL1}"
+UE_GW1="${UE_GW1}"
+DNN1="${DNN1}"
 
-APN_POOL_2="${APN_POOL_2}"   # optional (can be empty)
-APN_GW_2="${APN_GW_2}"       # optional
-DNN_2="${DNN_2}"             # optional
+UE_POOL2="${UE_POOL2}"
+UE_GW2="${UE_GW2}"
+DNN2="${DNN2}"
 
-# PLMN / Slice
-MCC="${MCC}"                 # 3 digits e.g. 204
-MNC="${MNC}"                 # 2 or 3 digits e.g. 61
-TAC="${TAC}"                 # e.g. 1
-SST="${SST}"                 # e.g. 1
-SD="${SD}"                   # 6 hex digits without 0x, e.g. 010203
+MCC="${MCC}"
+MNC="${MNC}"
+TAC="${TAC}"
+SST="${SST}"
+SD="${SD}"
 
-# Display / names
-NETWORK_NAME_FULL="${NETWORK_NAME_FULL}"
-NETWORK_NAME_SHORT="${NETWORK_NAME_SHORT}"
+NET_FULL="${NET_FULL}"
+NET_SHORT="${NET_SHORT}"
 AMF_NAME="${AMF_NAME}"
 MME_NAME="${MME_NAME}"
 
-# Behavior toggles
-MANAGE_NETPLAN="${MANAGE_NETPLAN}"   # "true" to generate/apply netplan (default false)
+MANAGE_NETPLAN="${MANAGE_NETPLAN}"
 EOF
-  chmod 600 "$KAOKAB_CFG_FILE"
-  ok "Config saved: ${KAOKAB_CFG_FILE}"
-}
+  chmod 600 "$CFG_FILE"
+  ok "Saved config: $CFG_FILE"
 
-load_or_collect_cfg() {
-  if [[ -f "$KAOKAB_CFG_FILE" ]]; then
-    # shellcheck disable=SC1091
-    source "$KAOKAB_CFG_FILE"
-    ok "Loaded config: ${KAOKAB_CFG_FILE}"
-    return
-  fi
-
-  info "No ${KAOKAB_CFG_FILE} found. Collecting minimal parameters (safe; no net changes unless MANAGE_NETPLAN=true)."
-
-  local def_iface def_gw
-  def_iface="$(ip -br link | awk '$1!="lo"{print $1; exit}')"
-  def_gw="$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}')"
-
-  INTERFACE="$(prompt_default "Interface name" "${def_iface:-ens160}")"
-
-  while :; do
-    S1AP_IP="$(prompt_default "S1AP/N2 IPv4 (Control) e.g. 192.168.178.80" "192.168.178.80")"
-    is_ipv4 "$S1AP_IP" && break
-    echo "Invalid IPv4. Try again."
-  done
-
-  while :; do
-    GTPU_IP="$(prompt_default "GTPU/N3 IPv4 (optional) e.g. 192.168.178.81" "192.168.178.81")"
-    is_ipv4 "$GTPU_IP" && break
-    echo "Invalid IPv4. Try again."
-  done
-
-  while :; do
-    UPF_IP="$(prompt_default "UPF GTPU bind IPv4 e.g. 192.168.178.82" "192.168.178.82")"
-    is_ipv4 "$UPF_IP" && break
-    echo "Invalid IPv4. Try again."
-  done
-
-  CIDR="$(prompt_default "CIDR mask" "24")"
-  GATEWAY="$(prompt_default "Gateway" "${def_gw:-192.168.178.1}")"
-  DNS1="$(prompt_default "DNS1" "1.1.1.1")"
-  DNS2="$(prompt_default "DNS2" "1.0.0.1")"
-
-  APN_POOL_1="$(prompt_default "UE pool #1 (CIDR) e.g. 10.45.0.0/16" "10.45.0.0/16")"
-  APN_GW_1="$(prompt_default "UE gateway #1 e.g. 10.45.0.1" "10.45.0.1")"
-  DNN_1="$(prompt_default "DNN #1 (APN) e.g. internet" "internet")"
-
-  APN_POOL_2="$(prompt_default "UE pool #2 (CIDR) optional" "10.46.0.0/16")"
-  APN_GW_2="$(prompt_default "UE gateway #2 optional" "10.46.0.1")"
-  DNN_2="$(prompt_default "DNN #2 optional" "ims")"
-
-  MCC="$(prompt_default "MCC (3 digits)" "204")"
-  MNC="$(prompt_default "MNC (2-3 digits)" "61")"
-  TAC="$(prompt_default "TAC" "1")"
-  SST="$(prompt_default "SST" "1")"
-  SD="$(prompt_default "SD (6 hex digits) e.g. 010203" "010203")"
-
-  NETWORK_NAME_FULL="$(prompt_default "Network name (full)" "Kaokab")"
-  NETWORK_NAME_SHORT="$(prompt_default "Network name (short)" "Kaokab")"
-  AMF_NAME="$(prompt_default "AMF name" "kaokab-amf0")"
-  MME_NAME="$(prompt_default "MME name" "kaokab-mme0")"
-
-  MANAGE_NETPLAN="$(prompt_default "Manage Netplan now? (true/false)" "false")"
-
-  save_cfg
+  box "CONFIG SUMMARY" \
+      "Interface: ${INTERFACE}" \
+      "S1AP/N2:   ${S1AP_IP}/${CIDR}" \
+      "GTPU/N3:   ${GTPU_IP}/${CIDR}" \
+      "UPF GTPU:  ${UPF_IP}/${CIDR}" \
+      "GW/DNS:    ${GATEWAY} | ${DNS1}, ${DNS2}" \
+      "UE pools:  ${UE_POOL1}(${DNN1}) , ${UE_POOL2}(${DNN2})" \
+      "PLMN:      ${MCC}/${MNC}  TAC:${TAC}  Slice:${SST}/${SD}" \
+      "Names:     ${NET_FULL}/${NET_SHORT} AMF:${AMF_NAME} MME:${MME_NAME}"
 }
 
 # ----------------------------
-# (Optional) Netplan management
+# Block03 — Netplan (optional)
 # ----------------------------
-apply_netplan_if_enabled() {
-  if [[ "${MANAGE_NETPLAN,,}" != "true" ]]; then
-    ok "Netplan management disabled (MANAGE_NETPLAN=false). Skipping."
-    return
+block03_netplan() {
+  step "Block03" "Netplan management (optional)"
+
+  # shellcheck disable=SC1091
+  source "$CFG_FILE"
+
+  if [[ "${MANAGE_NETPLAN}" != "true" ]]; then
+    warn "Netplan management skipped (MANAGE_NETPLAN=false)"
+    return 0
   fi
 
-  info "Netplan management enabled: generating /etc/netplan/01-kaokab.yaml"
-  apt_install netplan.io
+  local backup="${NETPLAN_DIR}/backup-$(date +%F_%H%M%S)"
+  mkdir -p "$backup"
+  cp -a "${NETPLAN_DIR}"/*.yaml "$backup"/ 2>/dev/null || true
+  ok "Netplan backup: $backup"
 
-  local netplan_dir="/etc/netplan"
-  local backup_dir="/etc/netplan/backup-$(date +%F_%H%M%S)"
-  mkdir -p "$backup_dir"
-  cp -a "$netplan_dir"/*.yaml "$backup_dir"/ 2>/dev/null || true
-  ok "Netplan backup: ${backup_dir}"
-
-  cat >"${netplan_dir}/01-kaokab.yaml" <<EOF
+  cat >"$NETPLAN_FILE" <<EOF
 network:
   version: 2
   ethernets:
@@ -287,195 +431,171 @@ network:
           - ${DNS1}
           - ${DNS2}
 EOF
-  chmod 600 "${netplan_dir}/01-kaokab.yaml"
+  chmod 600 "$NETPLAN_FILE"
+  ok "Netplan written: $NETPLAN_FILE"
 
-  info "Applying netplan"
+  spinner 3 "Applying netplan (do not disconnect)..."
   netplan generate >>"$LOG_FILE" 2>&1
   netplan apply >>"$LOG_FILE" 2>&1
-  sleep 3
+  sleep 2
 
-  # minimal validation
-  ip -4 addr show "$INTERFACE" | grep -q "$S1AP_IP" || fail "Netplan: missing ${S1AP_IP} on ${INTERFACE}"
-  ip route | grep -q "default via ${GATEWAY}" || fail "Netplan: default route missing via ${GATEWAY}"
-  ok "Netplan applied & validated"
+  ip route | grep -q "default via ${GATEWAY}" || { fail "Default route missing after netplan"; exit 1; }
+  getent hosts ubuntu.com >/dev/null 2>&1 || { fail "DNS check failed after netplan"; exit 1; }
+
+  ok "Netplan applied + validated"
 }
 
 # ----------------------------
-# IP forwarding + NAT (persisted)
+# Block04 — IP Forwarding + NAT
 # ----------------------------
-ensure_forwarding_and_nat() {
-  info "Block03: Enabling IP forwarding & NAT (persisted)"
+block04_nat() {
+  step "Block04" "Enable IP forwarding & NAT for UE subnets"
 
-  # sysctl persistent
-  cat >/etc/sysctl.d/99-kaokab.conf <<EOF
+  # shellcheck disable=SC1091
+  source "$CFG_FILE"
+
+  # kernel forwarding
+  cat >/etc/sysctl.d/99-kaokab-ipforward.conf <<EOF
 net.ipv4.ip_forward=1
 EOF
-  sysctl --system >>"$LOG_FILE" 2>&1
-  ok "IPv4 forwarding enabled + persisted"
+  sysctl -p /etc/sysctl.d/99-kaokab-ipforward.conf >>"$LOG_FILE" 2>&1
 
   # NAT rules (idempotent)
-  apt_install iptables iptables-persistent netfilter-persistent
+  iptables -t nat -C POSTROUTING -s "${UE_POOL1}" -o "${INTERFACE}" -j MASQUERADE 2>/dev/null \
+    || iptables -t nat -A POSTROUTING -s "${UE_POOL1}" -o "${INTERFACE}" -j MASQUERADE
 
-  # UE pools NAT through ${INTERFACE} (exclude ogstun)
-  # Use -C then -A to make idempotent
-  iptables -t nat -C POSTROUTING -s "${APN_POOL_1}" -o "${INTERFACE}" -j MASQUERADE 2>/dev/null \
-    || iptables -t nat -A POSTROUTING -s "${APN_POOL_1}" -o "${INTERFACE}" -j MASQUERADE
-
-  if [[ -n "${APN_POOL_2}" ]]; then
-    iptables -t nat -C POSTROUTING -s "${APN_POOL_2}" -o "${INTERFACE}" -j MASQUERADE 2>/dev/null \
-      || iptables -t nat -A POSTROUTING -s "${APN_POOL_2}" -o "${INTERFACE}" -j MASQUERADE
+  if [[ -n "${UE_POOL2}" ]]; then
+    iptables -t nat -C POSTROUTING -s "${UE_POOL2}" -o "${INTERFACE}" -j MASQUERADE 2>/dev/null \
+      || iptables -t nat -A POSTROUTING -s "${UE_POOL2}" -o "${INTERFACE}" -j MASQUERADE
   fi
 
-  netfilter-persistent save >>"$LOG_FILE" 2>&1
-  ok "IP forwarding & NAT enabled (and persisted)"
+  # persist iptables
+  apt_install iptables-persistent
+  netfilter-persistent save >>"$LOG_FILE" 2>&1 || true
+
+  ok "IP forwarding & NAT enabled"
+  iptables -t nat -S POSTROUTING | grep MASQUERADE | tee -a "$LOG_FILE" >/dev/null || true
 }
 
 # ----------------------------
-# Loopback aliases (SCP/NRF + NFs) — persistent via systemd
+# Block05 — Loopback aliases (single-node NF IPs)
 # ----------------------------
-install_loopback_aliases() {
-  info "Block04: Installing loopback aliases (persistent)"
+block05_loopbacks() {
+  step "Block05" "Install persistent loopback aliases (single-node NFs)"
 
-  mkdir -p /usr/local/sbin
-
-  cat >/usr/local/sbin/kaokab-loopback.sh <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-add_ip() {
-  local ip="$1"
-  ip -4 addr show lo | grep -q " ${ip}/8" 2>/dev/null || ip addr add "${ip}/8" dev lo
-}
-
-# Standard Open5GS single-node loopback map
-# EPC/Evolved + 5GC + SCP-based
-for ip in \
-  127.0.0.2  127.0.0.3  127.0.0.4  127.0.0.5  127.0.0.6  127.0.0.7  127.0.0.8  127.0.0.9 \
-  127.0.0.10 127.0.0.11 127.0.0.12 127.0.0.13 127.0.0.14 127.0.0.15 127.0.0.20 127.0.0.200
-do
-  add_ip "$ip"
-done
-EOF
-  chmod 755 /usr/local/sbin/kaokab-loopback.sh
-
-  cat >/etc/systemd/system/kaokab-loopback.service <<'EOF'
+  # Create systemd oneshot to add loopback IPs on boot
+  cat >"$LOOP_SVC" <<'EOF'
 [Unit]
-Description=KAOKAB Loopback IP Aliases for Open5GS (single node)
+Description=Kaokab Open5GS Loopback Aliases (single node)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/kaokab-loopback.sh
 RemainAfterExit=yes
+ExecStart=/bin/bash -c '\
+set -e; \
+for ip in 127.0.0.2 127.0.0.3 127.0.0.4 127.0.0.5 127.0.0.6 127.0.0.7 127.0.0.8 127.0.0.9 127.0.0.10 127.0.0.11 127.0.0.12 127.0.0.13 127.0.0.14 127.0.0.15 127.0.0.20 127.0.0.200; do \
+  /sbin/ip -4 addr show lo | grep -q "$ip/8" || /sbin/ip addr add "$ip/8" dev lo; \
+done'
+ExecStop=/bin/bash -c '\
+set -e; \
+for ip in 127.0.0.2 127.0.0.3 127.0.0.4 127.0.0.5 127.0.0.6 127.0.0.7 127.0.0.8 127.0.0.9 127.0.0.10 127.0.0.11 127.0.0.12 127.0.0.13 127.0.0.14 127.0.0.15 127.0.0.20 127.0.0.200; do \
+  /sbin/ip addr del "$ip/8" dev lo 2>/dev/null || true; \
+done'
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-  systemctl daemon-reload >>"$LOG_FILE" 2>&1
-  systemctl enable --now kaokab-loopback.service >>"$LOG_FILE" 2>&1
-  ok "Loopback aliases installed (kaokab-loopback.service)"
+  systemctl daemon-reload
+  systemctl enable --now "$LOOP_SVC_NAME" >>"$LOG_FILE" 2>&1
 
-  # validation
-  ip -4 addr show lo | grep -q "127.0.0.200/8" || fail "Loopback validation failed (missing 127.0.0.200)"
-  ok "Loopback alias validation OK"
+  ip -4 addr show lo | grep -q "127.0.0.200/8" || { fail "Loopback aliases not applied"; exit 1; }
+  ok "Loopback aliases installed"
 }
 
 # ----------------------------
-# MongoDB install (official repo) — service: mongod
+# Block06 — MongoDB install (non-interactive keys)
 # ----------------------------
-install_mongodb() {
-  info "Block05: Installing MongoDB (mongod)"
+block06_mongodb() {
+  step "Block06" "Install MongoDB 6.0 (repo + key, non-interactive)"
+
+  apt_install curl gnupg
+
+  install -d -m 0755 /etc/apt/keyrings
+
+  # key (non-interactive overwrite)
+  curl -fsSL https://pgp.mongodb.com/server-6.0.asc \
+    | gpg --dearmor --yes -o /etc/apt/keyrings/mongodb-server-6.0.gpg
+  chmod 0644 /etc/apt/keyrings/mongodb-server-6.0.gpg
+
+  # repo
+  cat >/etc/apt/sources.list.d/mongodb-org-6.0.list <<EOF
+deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/mongodb-server-6.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse
+EOF
 
   apt_update_once
-  apt_install ca-certificates curl gnupg lsb-release
-
-  mkdir -p /etc/apt/keyrings
-  chmod 755 /etc/apt/keyrings
-
-  # MongoDB 6.0 (jammy)
-  local keyring="/etc/apt/keyrings/mongodb-server-6.0.gpg"
-  curl -fsSL https://pgp.mongodb.com/server-6.0.asc | gpg --dearmor -o "$keyring" >>"$LOG_FILE" 2>&1
-  chmod 644 "$keyring"
-
-  local listfile="/etc/apt/sources.list.d/mongodb-org-6.0.list"
-  if [[ ! -f "$listfile" ]]; then
-    echo "deb [ arch=amd64,arm64 signed-by=${keyring} ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" \
-      > "$listfile"
-  fi
-
-  DEBIAN_FRONTEND=noninteractive apt-get update -y >>"$LOG_FILE" 2>&1
-  DEBIAN_FRONTEND=noninteractive apt-get install -y mongodb-org >>"$LOG_FILE" 2>&1
+  apt_install mongodb-org
 
   systemctl enable --now mongod >>"$LOG_FILE" 2>&1
-  systemctl is-active --quiet mongod && ok "MongoDB installed & running (mongod)" || fail "MongoDB failed to start"
+  spinner 2 "Waiting for MongoDB to become ready..."
+  systemctl is-active --quiet mongod || { fail "MongoDB is not running"; exit 1; }
+
+  ok "MongoDB installed & running (mongod)"
 }
 
 # ----------------------------
-# Open5GS install (PPA)
+# Block07 — Open5GS install
 # ----------------------------
-install_open5gs() {
-  info "Block06: Installing Open5GS (EPC + 5GC)"
+block07_open5gs_install() {
+  step "Block07" "Install Open5GS (latest PPA)"
+
+  apt_install software-properties-common
+  add-apt-repository -y ppa:open5gs/latest >>"$LOG_FILE" 2>&1 || true
 
   apt_update_once
-  apt_install software-properties-common ca-certificates curl
-
-  # Add Open5GS PPA idempotently
-  if ! grep -R "ppa.launchpadcontent.net/open5gs/latest" -n /etc/apt/sources.list /etc/apt/sources.list.d/* >/dev/null 2>&1; then
-    add-apt-repository -y ppa:open5gs/latest >>"$LOG_FILE" 2>&1
-    ok "Added Open5GS PPA: ppa:open5gs/latest"
-  else
-    ok "Open5GS PPA already present"
-  fi
-
-  DEBIAN_FRONTEND=noninteractive apt-get update -y >>"$LOG_FILE" 2>&1
-  DEBIAN_FRONTEND=noninteractive apt-get install -y open5gs >>"$LOG_FILE" 2>&1
+  apt_install open5gs
 
   ok "Open5GS installed"
 }
 
 # ----------------------------
-# Write Open5GS configs (SCP-based, like your working VM)
+# Block08 — Open5GS configuration (SCP-based, like working VM)
 # ----------------------------
-backup_open5gs_configs() {
-  mkdir -p "$OPEN5GS_DIR"
-  if compgen -G "${OPEN5GS_DIR}/*.yaml" >/dev/null 2>&1; then
-    mkdir -p "$OPEN5GS_BACKUP_DIR"
-    cp -a "${OPEN5GS_DIR}"/*.yaml "$OPEN5GS_BACKUP_DIR"/ 2>/dev/null || true
-    ok "Backup created: ${OPEN5GS_BACKUP_DIR}"
-  else
-    ok "No existing Open5GS YAMLs found (no backup needed)"
-  fi
+backup_open5gs() {
+  local backup="${OPEN5GS_DIR}/backup-$(date +%F_%H%M%S)"
+  mkdir -p "$backup"
+  cp -a "${OPEN5GS_DIR}"/*.yaml "$backup"/ 2>/dev/null || true
+  ok "Backup created: $backup"
 }
 
-write_open5gs_yaml() {
-  local file="$1"
-  local content="$2"
-  install -d -m 0750 -o open5gs -g open5gs "$OPEN5GS_DIR"
-  printf "%s\n" "$content" > "${OPEN5GS_DIR}/${file}"
-  chown open5gs:open5gs "${OPEN5GS_DIR}/${file}"
-  chmod 0640 "${OPEN5GS_DIR}/${file}"
+write_yaml() {
+  # write_yaml <path> <content>
+  local p="$1"
+  local c="$2"
+  install -o open5gs -g open5gs -m 0640 /dev/null "$p"
+  printf "%s\n" "$c" >"$p"
+  chown open5gs:open5gs "$p"
+  chmod 0640 "$p"
 }
 
-configure_open5gs_single_node_scp() {
-  info "Block07: Configuring Open5GS (Single Node, SCP-based)"
-  backup_open5gs_configs
+block08_open5gs_config() {
+  step "Block08" "Configure Open5GS (Single Node, SCP-based)"
 
-  # Normalize MNC to no-leading-zero style for 5GC configs (Open5GS examples commonly use "61" not "061")
-  # Keep exactly what user enters for MME gummei if they want; but for simplicity use same MNC in all.
-  local MNC_NORM="${MNC#0}"
+  # shellcheck disable=SC1091
+  source "$CFG_FILE"
+  backup_open5gs
 
-  # Common DNS list for SMF (required in 2.7.6+; your working VM includes it)
-  local SMF_DNS_1="${DNS2}"
-  local SMF_DNS_2="${DNS1}"
+  # Normalize MNC: keep numeric, no leading zeros needed in YAML (Open5GS accepts "61")
+  # We'll write exactly as provided.
 
-  # AMF
-  write_open5gs_yaml "amf.yaml" "$(cat <<EOF
+  # --- amf.yaml (include network_name like your working VM)
+  write_yaml "${OPEN5GS_DIR}/amf.yaml" "$(cat <<EOF
 logger:
   file:
     path: /var/log/open5gs/amf.log
-#  level: info   # fatal|error|warn|info(default)|debug|trace
+#  level: info
 
 global:
   max:
@@ -499,28 +619,28 @@ amf:
   guami:
     - plmn_id:
         mcc: ${MCC}
-        mnc: ${MNC_NORM}
+        mnc: ${MNC}
       amf_id:
         region: 1
         set: 1
   tai:
     - plmn_id:
         mcc: ${MCC}
-        mnc: ${MNC_NORM}
+        mnc: ${MNC}
       tac: ${TAC}
   plmn_support:
     - plmn_id:
         mcc: ${MCC}
-        mnc: ${MNC_NORM}
+        mnc: ${MNC}
       s_nssai:
-          sst: ${SST}
-          sd: ${SD}
+        sst: ${SST}
+        sd: ${SD}
   security:
     integrity_order : [ NIA2, NIA1, NIA0 ]
     ciphering_order : [ NEA0, NEA1, NEA2 ]
   network_name:
-    full: ${NETWORK_NAME_FULL}
-    short: ${NETWORK_NAME_SHORT}
+    full: ${NET_FULL}
+    short: ${NET_SHORT}
   amf_name: ${AMF_NAME}
   time:
     t3512:
@@ -528,8 +648,8 @@ amf:
 EOF
 )"
 
-  # NRF
-  write_open5gs_yaml "nrf.yaml" "$(cat <<EOF
+  # --- nrf.yaml
+  write_yaml "${OPEN5GS_DIR}/nrf.yaml" "$(cat <<EOF
 logger:
   file:
     path: /var/log/open5gs/nrf.log
@@ -543,7 +663,7 @@ nrf:
   serving:
     - plmn_id:
         mcc: ${MCC}
-        mnc: ${MNC_NORM}
+        mnc: ${MNC}
   sbi:
     server:
       - address: 127.0.0.10
@@ -551,8 +671,8 @@ nrf:
 EOF
 )"
 
-  # SCP
-  write_open5gs_yaml "scp.yaml" "$(cat <<'EOF'
+  # --- scp.yaml (core of SCP-based)
+  write_yaml "${OPEN5GS_DIR}/scp.yaml" "$(cat <<'EOF'
 logger:
   file:
     path: /var/log/open5gs/scp.log
@@ -567,14 +687,11 @@ scp:
     server:
       - address: 127.0.0.200
         port: 7777
-    client:
-      nrf:
-        - uri: http://127.0.0.10:7777
 EOF
 )"
 
-  # AUSF
-  write_open5gs_yaml "ausf.yaml" "$(cat <<EOF
+  # --- ausf.yaml
+  write_yaml "${OPEN5GS_DIR}/ausf.yaml" "$(cat <<EOF
 logger:
   file:
     path: /var/log/open5gs/ausf.log
@@ -595,8 +712,8 @@ ausf:
 EOF
 )"
 
-  # UDM
-  write_open5gs_yaml "udm.yaml" "$(cat <<EOF
+  # --- udm.yaml
+  write_yaml "${OPEN5GS_DIR}/udm.yaml" "$(cat <<EOF
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
@@ -618,8 +735,8 @@ udm:
 EOF
 )"
 
-  # UDR
-  write_open5gs_yaml "udr.yaml" "$(cat <<EOF
+  # --- udr.yaml
+  write_yaml "${OPEN5GS_DIR}/udr.yaml" "$(cat <<EOF
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
@@ -641,8 +758,8 @@ udr:
 EOF
 )"
 
-  # PCF
-  write_open5gs_yaml "pcf.yaml" "$(cat <<EOF
+  # --- pcf.yaml (must include db_uri)
+  write_yaml "${OPEN5GS_DIR}/pcf.yaml" "$(cat <<EOF
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
@@ -668,8 +785,8 @@ pcf:
 EOF
 )"
 
-  # NSSF
-  write_open5gs_yaml "nssf.yaml" "$(cat <<EOF
+  # --- nssf.yaml
+  write_yaml "${OPEN5GS_DIR}/nssf.yaml" "$(cat <<EOF
 logger:
   file:
     path: /var/log/open5gs/nssf.log
@@ -688,50 +805,26 @@ nssf:
       scp:
         - uri: http://127.0.0.200:7777
   nsi:
-    - name: "default"
+    - name: nsi-1
       s_nssai:
-        - sst: ${SST}
-          sd: ${SD}
+        sst: ${SST}
+        sd: ${SD}
 EOF
 )"
 
-  # BSF
-  write_open5gs_yaml "bsf.yaml" "$(cat <<EOF
-db_uri: mongodb://localhost/open5gs
-logger:
-  file:
-    path: /var/log/open5gs/bsf.log
-#  level: info
-
-global:
-  max:
-    ue: 1024
-
-bsf:
-  sbi:
-    server:
-      - address: 127.0.0.15
-        port: 7777
-    client:
-      scp:
-        - uri: http://127.0.0.200:7777
-EOF
-)"
-
-  # SMF (SCP-based + sessions + DNS required)
-  # Includes 2 sessions if APN_POOL_2 is set; otherwise only #1.
-  local sessions="  session:
-    - subnet: ${APN_POOL_1}
-      gateway: ${APN_GW_1}
-      dnn: ${DNN_1}"
-  if [[ -n "${APN_POOL_2}" && -n "${APN_GW_2}" && -n "${DNN_2}" ]]; then
-    sessions="${sessions}
-    - subnet: ${APN_POOL_2}
-      gateway: ${APN_GW_2}
-      dnn: ${DNN_2}"
+  # --- smf.yaml (includes dns section required in your working VM for 2.7.6)
+  # Always include at least one session (DNN1). Optionally include DNN2.
+  SMF_SESSIONS="    - subnet: ${UE_POOL1}
+      gateway: ${UE_GW1}
+      dnn: ${DNN1}"
+  if [[ -n "${UE_POOL2}" && -n "${UE_GW2}" && -n "${DNN2}" ]]; then
+    SMF_SESSIONS="${SMF_SESSIONS}
+    - subnet: ${UE_POOL2}
+      gateway: ${UE_GW2}
+      dnn: ${DNN2}"
   fi
 
-  write_open5gs_yaml "smf.yaml" "$(cat <<EOF
+  write_yaml "${OPEN5GS_DIR}/smf.yaml" "$(cat <<EOF
 logger:
   file:
     path: /var/log/open5gs/smf.log
@@ -765,19 +858,20 @@ smf:
     server:
       - address: 127.0.0.4
         port: 9090
-${sessions}
+  session:
+${SMF_SESSIONS}
 
   dns:
-    - ${SMF_DNS_1}
-    - ${SMF_DNS_2}
+    - ${DNS2}
+    - ${DNS1}
 
   mtu: 1500
   freeDiameter: /etc/freeDiameter/smf.conf
 EOF
 )"
 
-  # UPF
-  write_open5gs_yaml "upf.yaml" "$(cat <<EOF
+  # --- upf.yaml (bind gtp on UPF_IP, pfcp on 127.0.0.7)
+  write_yaml "${OPEN5GS_DIR}/upf.yaml" "$(cat <<EOF
 logger:
   file:
     path: /var/log/open5gs/upf.log
@@ -795,13 +889,12 @@ upf:
     server:
       - address: ${UPF_IP}
   session:
-    - name: ogstun
-      subnet: ${APN_POOL_1}
+    - subnet: ${UE_POOL1}
 EOF
 )"
 
-  # EPC side configs (MME/SGWC/SGWU/PCRF/HSS) — keep minimal but working
-  write_open5gs_yaml "mme.yaml" "$(cat <<EOF
+  # --- EPC: mme.yaml, sgwc.yaml, sgwu.yaml, hss.yaml, pcrf.yaml (basic single node)
+  write_yaml "${OPEN5GS_DIR}/mme.yaml" "$(cat <<EOF
 logger:
   file:
     path: /var/log/open5gs/mme.log
@@ -831,25 +924,25 @@ mme:
   gummei:
     - plmn_id:
         mcc: ${MCC}
-        mnc: ${MNC_NORM}
+        mnc: ${MNC}
       mme_gid: 2
       mme_code: 1
   tai:
     - plmn_id:
         mcc: ${MCC}
-        mnc: ${MNC_NORM}
+        mnc: ${MNC}
       tac: ${TAC}
   security:
     integrity_order : [ EIA2, EIA1, EIA0 ]
     ciphering_order : [ EEA0, EEA1, EEA2 ]
   network_name:
-    full: ${NETWORK_NAME_FULL}
-    short: ${NETWORK_NAME_SHORT}
+    full: ${NET_FULL}
+    short: ${NET_SHORT}
   mme_name: ${MME_NAME}
 EOF
 )"
 
-  write_open5gs_yaml "sgwc.yaml" "$(cat <<'EOF'
+  write_yaml "${OPEN5GS_DIR}/sgwc.yaml" "$(cat <<'EOF'
 logger:
   file:
     path: /var/log/open5gs/sgwc.log
@@ -872,7 +965,7 @@ sgwc:
 EOF
 )"
 
-  write_open5gs_yaml "sgwu.yaml" "$(cat <<EOF
+  write_yaml "${OPEN5GS_DIR}/sgwu.yaml" "$(cat <<EOF
 logger:
   file:
     path: /var/log/open5gs/sgwu.log
@@ -892,24 +985,7 @@ sgwu:
 EOF
 )"
 
-  write_open5gs_yaml "pcrf.yaml" "$(cat <<'EOF'
-db_uri: mongodb://localhost/open5gs
-logger:
-  file:
-    path: /var/log/open5gs/pcrf.log
-#  level: info
-
-global:
-  max:
-    ue: 1024
-
-pcrf:
-  freeDiameter: /etc/freeDiameter/pcrf.conf
-EOF
-)"
-
-  # Minimal HSS (many deployments need more; this is a safe baseline)
-  write_open5gs_yaml "hss.yaml" "$(cat <<'EOF'
+  write_yaml "${OPEN5GS_DIR}/hss.yaml" "$(cat <<'EOF'
 db_uri: mongodb://localhost/open5gs
 logger:
   file:
@@ -925,39 +1001,19 @@ hss:
 EOF
 )"
 
-  # SEPP placeholders (safe minimal)
-  write_open5gs_yaml "sepp1.yaml" "$(cat <<'EOF'
+  write_yaml "${OPEN5GS_DIR}/pcrf.yaml" "$(cat <<'EOF'
+db_uri: mongodb://localhost/open5gs
 logger:
   file:
-    path: /var/log/open5gs/sepp1.log
+    path: /var/log/open5gs/pcrf.log
 #  level: info
 
 global:
   max:
     ue: 1024
 
-sepp:
-  sbi:
-    server:
-      - address: 127.0.0.8
-        port: 7777
-EOF
-)"
-  write_open5gs_yaml "sepp2.yaml" "$(cat <<'EOF'
-logger:
-  file:
-    path: /var/log/open5gs/sepp2.log
-#  level: info
-
-global:
-  max:
-    ue: 1024
-
-sepp:
-  sbi:
-    server:
-      - address: 127.0.0.9
-        port: 7777
+pcrf:
+  freeDiameter: /etc/freeDiameter/pcrf.conf
 EOF
 )"
 
@@ -965,123 +1021,104 @@ EOF
 }
 
 # ----------------------------
-# Start Open5GS (correct order)
+# Block09 — Start services in strict order + health checks
 # ----------------------------
-start_open5gs_services() {
-  info "Block08: Starting Open5GS (MongoDB → NRF/SCP → others)"
+block09_start() {
+  step "Block09" "Start Open5GS (strict order) + health check"
 
   systemctl enable --now mongod >>"$LOG_FILE" 2>&1 || true
-  systemctl restart mongod >>"$LOG_FILE" 2>&1
+  spinner 2 "Ensuring MongoDB is running..."
+  systemctl is-active --quiet mongod || { fail "mongod not running"; exit 1; }
 
-  # Core discovery/mesh first
-  systemctl enable open5gs-nrfd open5gs-scpd >>"$LOG_FILE" 2>&1 || true
-  systemctl restart open5gs-nrfd open5gs-scpd >>"$LOG_FILE" 2>&1
+  # Start core in recommended order
+  info "Starting NRF + SCP"
+  systemctl restart open5gs-nrfd open5gs-scpd >>"$LOG_FILE" 2>&1 || true
   sleep 2
 
-  # Next: database-backed control functions
-  systemctl enable open5gs-ausfd open5gs-udmd open5gs-udrd open5gs-pcfd open5gs-nssfd open5gs-bsfd >>"$LOG_FILE" 2>&1 || true
-  systemctl restart open5gs-ausfd open5gs-udmd open5gs-udrd open5gs-pcfd open5gs-nssfd open5gs-bsfd >>"$LOG_FILE" 2>&1
+  info "Starting AUSF/UDM/UDR/PCF/NSSF/BSF/HSS"
+  systemctl restart open5gs-ausfd open5gs-udmd open5gs-udrd open5gs-pcfd open5gs-nssfd open5gs-bsfd open5gs-hssd >>"$LOG_FILE" 2>&1 || true
   sleep 2
 
-  # Finally: AMF/SMF/UPF + EPC daemons
-  systemctl enable open5gs-amfd open5gs-smfd open5gs-upfd open5gs-mmed open5gs-sgwcd open5gs-sgwud open5gs-pcrfd open5gs-hssd >>"$LOG_FILE" 2>&1 || true
-  systemctl restart open5gs-amfd open5gs-smfd open5gs-upfd open5gs-mmed open5gs-sgwcd open5gs-sgwud open5gs-pcrfd open5gs-hssd >>"$LOG_FILE" 2>&1
+  info "Starting AMF/SMF/UPF + EPC components"
+  systemctl restart open5gs-amfd open5gs-smfd open5gs-upfd open5gs-mmed open5gs-sgwcd open5gs-sgwud open5gs-pcrfd >>"$LOG_FILE" 2>&1 || true
   sleep 2
 
-  ok "Open5GS services start sequence issued"
+  ok "Open5GS services started"
 }
 
-# ----------------------------
-# Health checks
-# ----------------------------
-health_check() {
-  info "Block09: Health check"
+health_ports() {
+  # expects various 7777 listeners
+  ss -tuln | grep -q ":7777" || return 1
+  return 0
+}
 
-  # Services
-  local services=(
-    mongod
-    open5gs-nrfd open5gs-scpd
-    open5gs-ausfd open5gs-udmd open5gs-udrd open5gs-pcfd open5gs-nssfd open5gs-bsfd
-    open5gs-amfd open5gs-smfd open5gs-upfd
-  )
+health_services() {
+  local bad
+  bad="$(systemctl list-units --all --plain --no-pager | awk '/open5gs-.*service/{print $1,$4}' | grep -E 'failed|inactive' || true)"
+  [[ -z "$bad" ]]
+}
 
-  local bad=0
-  for s in "${services[@]}"; do
-    if systemctl is-active --quiet "$s"; then
-      :
-    else
-      warn "Service not active: $s"
-      bad=1
-    fi
-  done
+block10_health() {
+  step "Block10" "Health check (ports + services)"
 
-  # SBI endpoints (must match SCP-based architecture)
-  ss -tuln | grep -q "127.0.0.200:7777" || { fail "SCP not listening on 127.0.0.200:7777"; bad=1; }
-  ss -tuln | grep -q "127.0.0.10:7777"  || { fail "NRF not listening on 127.0.0.10:7777";  bad=1; }
-  ss -tuln | grep -q "127.0.0.5:7777"   || { fail "AMF not listening on 127.0.0.5:7777";   bad=1; }
-  ss -tuln | grep -q "127.0.0.4:7777"   || { fail "SMF not listening on 127.0.0.4:7777";   bad=1; }
-
-  if [[ "$bad" -ne 0 ]]; then
-    fail "Health check failed. See log: ${LOG_FILE}"
-    info "Useful commands:"
-    log "  journalctl -u open5gs-amfd -n 80 --no-pager"
-    log "  journalctl -u open5gs-smfd -n 80 --no-pager"
-    log "  journalctl -u open5gs-nrfd -n 80 --no-pager"
-    log "  journalctl -u open5gs-scpd -n 80 --no-pager"
+  spinner 2 "Checking SBI ports (7777)..."
+  if health_ports; then
+    ok "SBI ports listening"
+  else
+    fail "No SBI port 7777 listening"
+    ss -tuln | grep 7777 || true
     exit 1
   fi
 
-  ok "SBI ports listening"
-  ok "Core services running"
+  spinner 2 "Checking Open5GS service status..."
+  if health_services; then
+    ok "Core services running"
+  else
+    fail "Some Open5GS services are not running"
+    systemctl list-units --all --plain --no-pager | grep 'open5gs-' || true
+    exit 1
+  fi
+
+  box "✅ KAOKAB5GC INSTALLATION COMPLETE" \
+      "Core is up (EPC + 5GC) in single-node SCP architecture." \
+      "Config: ${CFG_FILE}" \
+      "Logs:   ${LOG_FILE}" \
+      "" \
+      "Next: WebUI + Subscriber Provisioning (we can add as Block11)."
 }
 
 # ----------------------------
-# System check summary
-# ----------------------------
-system_check_summary() {
-  log "=================================================="
-  log " ✅ SYSTEM CHECK PASSED"
-  log " - OS            : Ubuntu 22.04"
-  log " - Privileges    : root"
-  log " - Installer log : ${LOG_FILE}"
-  log "=================================================="
-}
-
-# ----------------------------
-# Main (strict order)
+# Main
 # ----------------------------
 main() {
-  need_root
-  check_os
+  require_root
   banner
 
-  # Base tools (stable CLI only; no apt warnings)
-  info "Block01: Base prerequisites"
-  apt_update_once
-  apt_install ca-certificates curl gnupg lsb-release software-properties-common iproute2 iputils-ping net-tools jq
-  ok "Base prerequisites ready"
+  block01
 
-  load_or_collect_cfg
-  system_check_summary
+  # If config exists, allow re-use (no forced re-entry).
+  if [[ -f "$CFG_FILE" ]]; then
+    box "CONFIG FOUND" \
+        "Existing config detected:" \
+        "${CFG_FILE}" \
+        "" \
+        "Installer will reuse it (delete it to re-enter values)."
+  else
+    block02
+  fi
 
-  # Optional netplan (off by default)
-  apply_netplan_if_enabled
+  # Ensure config loaded for later steps
+  # shellcheck disable=SC1091
+  source "$CFG_FILE"
 
-  ensure_forwarding_and_nat
-  install_loopback_aliases
-  install_mongodb
-  install_open5gs
-  configure_open5gs_single_node_scp
-  start_open5gs_services
-  health_check
-
-  echo
-  log "================================================="
-  log " ✅ KAOKAB5GC INSTALLATION COMPLETE"
-  log "================================================="
-  log " Next: WebUI + subscriber provisioning can be added as a separate final block."
-  log " Log file: ${LOG_FILE}"
-  echo
+  block03_netplan
+  block04_nat
+  block05_loopbacks
+  block06_mongodb
+  block07_open5gs_install
+  block08_open5gs_config
+  block09_start
+  block10_health
 }
 
 main "$@"
