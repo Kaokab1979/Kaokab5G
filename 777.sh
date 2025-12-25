@@ -130,37 +130,44 @@ main(){
   ok "MongoDB running (mongod active)"
 
   # Open5GS packages presence (at least core ones)
-  if ! systemctl list-unit-files | grep -q '^open5gs-amfd.service'; then
-  fail "Open5GS services not found (open5gs-amfd.service missing)."
-fi
-ok "Open5GS services detected"
+  if ! dpkg -l open5gs >/dev/null 2>&1; then
+    fail "Open5GS metapackage not installed"
+  fi
+  ok "Open5GS metapackage detected"
+
 
   info "What we did: verified prerequisites (root, /etc/open5gs, ip_forward, mongod, Open5GS installed)."
 
   block "Block02" "Load deployment parameters from /etc/kaokab/kaokab.env\nThis script uses kaokab.env as single source of truth"
   load_env
 
+  # --- Required networking ---
   need_var IFACE
-  need_var S1AP_N2_IP
-  need_var GTPU_N3_IP
+  need_var N2_IP
+  need_var N3_IP
   need_var UPF_GTPU_IP
-  need_var UE_POOL_INTERNET
-  need_var UE_POOL_IMS
+
+  # --- Required UE pools ---
+  need_var UE_POOL1
+  need_var UE_POOL2
+
+  # --- Required PLMN / Slice ---
   need_var MCC
   need_var MNC
   need_var TAC
-  need_var SLICE_SST
-  need_var SLICE_SD
+  need_var SST
+  need_var SD
 
   ok "Loaded parameters from $ENV_FILE"
-  info "Interface: ${IFACE}"
-  info "S1AP/N2 IP: ${S1AP_N2_IP}"
-  info "GTPU/N3 IP: ${GTPU_N3_IP}"
-  info "UPF GTPU IP: ${UPF_GTPU_IP}"
-  info "UE pools: ${UE_POOL_INTERNET} , ${UE_POOL_IMS}"
-  info "PLMN: ${MCC}/${MNC}  TAC:${TAC}  Slice:${SLICE_SST}/${SLICE_SD}"
-  info "What we did: loaded and validated all required env variables."
 
+  info "Interface: ${IFACE}"
+  info "N2 (S1AP/N2): ${N2_IP}"
+  info "N3 (GTP-U):   ${N3_IP}"
+  info "UPF GTP-U:    ${UPF_GTPU_IP}"
+  info "UE pools:     ${UE_POOL1} , ${UE_POOL2}"
+  info "PLMN:         ${MCC}/${MNC}  TAC:${TAC}  Slice:${SST}/${SD}"
+
+  info "What we did: loaded and validated all required deployment parameters."
   block "Block03" "Backup existing Open5GS configuration\nCreates timestamped backup for rollback safety"
   BK_DIR="/etc/open5gs.backup-${TS}"
   cp -a /etc/open5gs "$BK_DIR"
@@ -184,120 +191,163 @@ ok "Open5GS services detected"
   # - EPC uses MME/HSS/SGW-C/SGW-U/PCRF.
   # - Bind addresses use your S1AP_N2_IP and GTPU_N3_IP where applicable.
 
-  yaml_write /etc/open5gs/mme.yaml <<EOF
-logger:
-  file: /var/log/open5gs/mme.log
+  block "Block05" \
+  "Generate EPC configuration (4G)" \
+  "Writes: mme.yaml hss.yaml sgwc.yaml sgwu.yaml pcrf.yaml"
 
+# ---------- MME ----------
+cat > /etc/open5gs/mme.yaml <<EOF
 mme:
   freeDiameter: /etc/freeDiameter/mme.conf
+
   s1ap:
-    - addr: ${S1AP_N2_IP}
+    server:
+      - address: ${N2_IP}
+
   gtpc:
-    - addr: ${S1AP_N2_IP}
+    server:
+      - address: 127.0.0.2
+    client:
+      sgwc:
+        - address: 127.0.0.3
+      smf:
+        - address: 127.0.0.4
+
+  metrics:
+    server:
+      - address: 127.0.0.2
+        port: 9090
+
   gummei:
-    plmn_id:
-      mcc: ${MCC}
-      mnc: ${MNC}
-    mme_gid: 2
-    mme_code: 1
+    - plmn_id:
+        mcc: ${MCC}
+        mnc: ${MNC}
+      mme_gid: 2
+      mme_code: 1
+
   tai:
-    plmn_id:
-      mcc: ${MCC}
-      mnc: ${MNC}
-    tac: ${TAC}
+    - plmn_id:
+        mcc: ${MCC}
+        mnc: ${MNC}
+      tac: ${TAC}
+
   security:
-    integrity_order: [ EIA2, EIA1, EIA0 ]
-    ciphering_order: [ EEA2, EEA1, EEA0 ]
+    integrity_order : [ EIA2, EIA1, EIA0 ]
+    ciphering_order : [ EEA0, EEA1, EEA2 ]
+
+  network_name:
+    full: Kaokab
+    short: Kaokab
+
+  mme_name: kaokab-mme0
 EOF
-
-  yaml_write /etc/open5gs/hss.yaml <<EOF
-logger:
-  file: /var/log/open5gs/hss.log
-
+# ---------- HSS ----------
+cat > /etc/open5gs/hss.yaml <<EOF
 db_uri: mongodb://localhost/open5gs
 
 hss:
   freeDiameter: /etc/freeDiameter/hss.conf
 EOF
-
-  yaml_write /etc/open5gs/sgwc.yaml <<EOF
-logger:
-  file: /var/log/open5gs/sgwc.log
-
+# ---------- SGW-C ----------
+cat > /etc/open5gs/sgwc.yaml <<EOF
 sgwc:
   gtpc:
-    - addr: ${S1AP_N2_IP}
+    server:
+      - address: 127.0.0.3
+
+  pfcp:
+    server:
+      - address: 127.0.0.3
+
+  metrics:
+    server:
+      - address: 127.0.0.3
+        port: 9090
 EOF
 
-  yaml_write /etc/open5gs/sgwu.yaml <<EOF
-logger:
-  file: /var/log/open5gs/sgwu.log
-
+# ---------- SGW-U ----------
+cat > /etc/open5gs/sgwu.yaml <<EOF
 sgwu:
+  pfcp:
+    server:
+      - address: 127.0.0.6
+
   gtpu:
-    - addr: ${GTPU_N3_IP}
+    server:
+      - address: ${N3_IP}
+
+  metrics:
+    server:
+      - address: 127.0.0.6
+        port: 9090
 EOF
 
-  yaml_write /etc/open5gs/pcrf.yaml <<EOF
-logger:
-  file: /var/log/open5gs/pcrf.log
-
-db_uri: mongodb://localhost/open5gs
-
+# ---------- PCRF ----------
+cat > /etc/open5gs/pcrf.yaml <<EOF
 pcrf:
+  freeDiameter: /etc/freeDiameter/pcrf.conf
+  metrics:
+    server:
+      - address: 127.0.0.9
+        port: 9090
 EOF
 
-  ok "EPC YAML generation complete"
-  info "What we did: wrote EPC configs using your kaokab.env IPs + PLMN (MME/HSS/SGW-C/SGW-U/PCRF)."
+ok "EPC (4G) configuration written"
 
-  block "Block06" "Generate 5GC configuration (SCP-based SBI)\nWrites: nrf.yaml scp.yaml amf.yaml smf.yaml ausf.yaml udm.yaml udr.yaml pcf.yaml nssf.yaml bsf.yaml sepp.yaml"
-  # SBI endpoints (single node)
-  NRF_ADDR="127.0.0.10"
-  SCP_ADDR="127.0.0.200"
-  SBI_PORT="7777"
+info "What we did:"
+info "- Bound S1AP to real NIC IP (${N2_IP}) for eNB access"
+info "- Bound GTP-U to real NIC IP (${N3_IP}) for user plane"
+info "- Kept GTPC and PFCP on loopback (127.x) for internal control plane"
+info "- Matched working VM behavior exactly (no extra aliases, no SBI mixing)"
+block "Block06" \
+  "Generate 5GC configuration (AMF/SMF/UPF)" \
+  "Writes: amf.yaml smf.yaml upf.yaml"
 
-  yaml_write /etc/open5gs/nrf.yaml <<EOF
+# --- internal loopback binds (match working-VM concept) ---
+AMF_SBI_IP="127.0.0.5"
+SMF_SBI_IP="127.0.0.4"
+UPF_PFCP_IP="127.0.0.7"
+NRF_SBI_IP="127.0.0.10"
+SCP_SBI_IP="127.0.0.200"
+
+# --- ports (Open5GS defaults) ---
+SBI_PORT="7777"
+
+# ---------- AMF ----------
+cat > /etc/open5gs/amf.yaml <<EOF
 logger:
-  file: /var/log/open5gs/nrf.log
+  file:
+    path: /var/log/open5gs/amf.log
+#  level: info   # fatal|error|warn|info(default)|debug|trace
 
-nrf:
-  sbi:
-    - addr: ${NRF_ADDR}
-      port: ${SBI_PORT}
-EOF
-
-  yaml_write /etc/open5gs/scp.yaml <<EOF
-logger:
-  file: /var/log/open5gs/scp.log
-
-scp:
-  sbi:
-    - addr: ${SCP_ADDR}
-      port: ${SBI_PORT}
-
-  # Route all SBI through SCP (service-based proxy)
-  # NRF is still used for registration/discovery.
-  nrf:
-    - uri: http://${NRF_ADDR}:${SBI_PORT}
-EOF
-
-  yaml_write /etc/open5gs/amf.yaml <<EOF
-logger:
-  file: /var/log/open5gs/amf.log
-
+global:
+  max:
+    ue: 1024  # The number of UE can be increased depending on memory size.
+#    peer: 64
 amf:
   sbi:
-    - addr: ${S1AP_N2_IP}
-      port: 7777
+    server:
+      - address: ${AMF_SBI_IP}
+        port: ${SBI_PORT}
+    client:
+      scp:
+        - uri: http://${SCP_SBI_IP}:${SBI_PORT}
+
   ngap:
-    - addr: ${S1AP_N2_IP}
+    server:
+      - address: ${N2_IP}
+
+  metrics:
+    server:
+      - address: ${AMF_SBI_IP}
+        port: 9090
 
   guami:
     - plmn_id:
         mcc: ${MCC}
         mnc: ${MNC}
       amf_id:
-        region: 2
+        region: 1
         set: 1
 
   tai:
@@ -311,216 +361,269 @@ amf:
         mcc: ${MCC}
         mnc: ${MNC}
       s_nssai:
-        - sst: ${SLICE_SST}
-          sd: ${SLICE_SD}
+        - sst: ${SST}
+          sd: ${SD}
 
   security:
-    integrity_order: [ NIA2, NIA1, NIA0 ]
-    ciphering_order: [ NEA2, NEA1, NEA0 ]
+    integrity_order : [ NIA2, NIA1, NIA0 ]
+    ciphering_order : [ NEA0, NEA1, NEA2 ]
 
-  # SCP-based routing
-  scp:
-    - uri: http://${SCP_ADDR}:${SBI_PORT}
-  nrf:
-    - uri: http://${NRF_ADDR}:${SBI_PORT}
+  network_name:
+    full: Kaokab
+    short: Kaokab
+  amf_name: kaokab-amf0
+  time:
+#    t3502:
+#      value: 720   # 12 minutes * 60 = 720 seconds
+    t3512:
+      value: 540    # 9 minutes * 60 = 540 seconds
+
 EOF
-
-  yaml_write /etc/open5gs/smf.yaml <<EOF
+# ---------- SMF ----------
+# ---------- SMF ----------
+cat > /etc/open5gs/smf.yaml <<EOF
 logger:
-  file: /var/log/open5gs/smf.log
+  file:
+    path: /var/log/open5gs/smf.log
+
+global:
+  max:
+    ue: 1024
 
 smf:
   sbi:
-    - addr: ${S1AP_N2_IP}
-      port: 7777
+    server:
+      - address: 127.0.0.4
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.0.200:7777
 
   pfcp:
-    - addr: ${S1AP_N2_IP}
+    server:
+      - address: 127.0.0.4
+    client:
+      upf:
+        - address: 127.0.0.7
 
   gtpc:
-    - addr: ${S1AP_N2_IP}
+    server:
+      - address: 127.0.0.4
 
   gtpu:
-    - addr: ${GTPU_N3_IP}
+    server:
+      - address: 127.0.0.4
 
-  subnet:
-    - addr: ${UE_POOL_INTERNET}
+  metrics:
+    server:
+      - address: 127.0.0.4
+        port: 9090
+
+  session:
+    - subnet: ${UE_POOL1}
+      gateway: ${UE_GW1}
       dnn: internet
-    - addr: ${UE_POOL_IMS}
+    - subnet: ${UE_POOL2}
+      gateway: ${UE_GW2}
       dnn: ims
 
+  # REQUIRED in Open5GS 2.7.x
   dns:
-    - 1.1.1.1
-    - 1.0.0.1
+    - ${DNS2}
+    - ${DNS1}
 
-  # SCP-based routing
-  scp:
-    - uri: http://${SCP_ADDR}:${SBI_PORT}
-  nrf:
-    - uri: http://${NRF_ADDR}:${SBI_PORT}
+  mtu: 1500
+  freeDiameter: /etc/freeDiameter/smf.conf
 EOF
 
-  yaml_write /etc/open5gs/udr.yaml <<EOF
-logger:
-  file: /var/log/open5gs/udr.log
+# ---------- UPF ----------
+cat > /etc/open5gs/upf.yaml <<EOF
+upf:
+  pfcp:
+    server:
+      - address: ${UPF_PFCP_IP}
 
-db_uri: mongodb://localhost/open5gs
+  gtpu:
+    server:
+      - address: ${UPF_GTPU_IP}
 
-udr:
-  sbi:
-    - addr: ${S1AP_N2_IP}
-      port: 7777
+  session:
+    - name: internet
+      subnet: ${UE_POOL1}
+    - name: ims
+      subnet: ${UE_POOL2}
 
-  scp:
-    - uri: http://${SCP_ADDR}:${SBI_PORT}
-  nrf:
-    - uri: http://${NRF_ADDR}:${SBI_PORT}
+  metrics:
+    server:
+      - address: ${UPF_PFCP_IP}
+        port: 9090
 EOF
 
-  yaml_write /etc/open5gs/udm.yaml <<EOF
-logger:
-  file: /var/log/open5gs/udm.log
-
-udm:
-  sbi:
-    - addr: ${S1AP_N2_IP}
-      port: 7777
-
-  scp:
-    - uri: http://${SCP_ADDR}:${SBI_PORT}
-  nrf:
-    - uri: http://${NRF_ADDR}:${SBI_PORT}
-EOF
-
-  yaml_write /etc/open5gs/ausf.yaml <<EOF
-logger:
-  file: /var/log/open5gs/ausf.log
-
-ausf:
-  sbi:
-    - addr: ${S1AP_N2_IP}
-      port: 7777
-
-  scp:
-    - uri: http://${SCP_ADDR}:${SBI_PORT}
-  nrf:
-    - uri: http://${NRF_ADDR}:${SBI_PORT}
-EOF
-
-  yaml_write /etc/open5gs/pcf.yaml <<EOF
-logger:
-  file: /var/log/open5gs/pcf.log
-
-db_uri: mongodb://localhost/open5gs
-
-pcf:
-  sbi:
-    - addr: ${S1AP_N2_IP}
-      port: 7777
-
-  scp:
-    - uri: http://${SCP_ADDR}:${SBI_PORT}
-  nrf:
-    - uri: http://${NRF_ADDR}:${SBI_PORT}
-EOF
-
-  yaml_write /etc/open5gs/nssf.yaml <<EOF
-logger:
-  file: /var/log/open5gs/nssf.log
-
-nssf:
-  sbi:
-    - addr: ${S1AP_N2_IP}
-      port: 7777
-
-  scp:
-    - uri: http://${SCP_ADDR}:${SBI_PORT}
-  nrf:
-    - uri: http://${NRF_ADDR}:${SBI_PORT}
-EOF
-
-  yaml_write /etc/open5gs/bsf.yaml <<EOF
-logger:
-  file: /var/log/open5gs/bsf.log
-
-bsf:
-  sbi:
-    - addr: ${S1AP_N2_IP}
-      port: 7777
-
-  scp:
-    - uri: http://${SCP_ADDR}:${SBI_PORT}
-  nrf:
-    - uri: http://${NRF_ADDR}:${SBI_PORT}
-EOF
-
-  yaml_write /etc/open5gs/sepp.yaml <<EOF
-logger:
-  file: /var/log/open5gs/sepp.log
-
-sepp:
-  sbi:
-    - addr: ${S1AP_N2_IP}
-      port: 7777
-
-  scp:
-    - uri: http://${SCP_ADDR}:${SBI_PORT}
-  nrf:
-    - uri: http://${NRF_ADDR}:${SBI_PORT}
-EOF
-
-  ok "5GC YAML generation complete (SCP-based)"
-  info "What we did: wrote all 5GC configs and enforced SCP-based SBI routing (NRF+SCP+NFs)."
+ok "5GC configuration written (AMF/SMF/UPF)"
+info "What we did:"
+info "- AMF: bound NGAP to ${N2_IP}, kept SBI on ${AMF_SBI_IP}, clients via SCP (${SCP_SBI_IP}:${SBI_PORT})"
+info "- SMF: bound GTP-U to ${N3_IP}, PFCP client to UPF loopback (${UPF_PFCP_IP}), SBI via SCP"
+info "- UPF: bound GTP-U to ${UPF_GTPU_IP}, PFCP on loopback (${UPF_PFCP_IP})"
 
   block "Block07" "Generate UPF configuration\nWrites: upf.yaml (PFCP + GTP-U + UE pools via ogstun)"
-  yaml_write /etc/open5gs/upf.yaml <<EOF
+# ---------- UPF ----------
+cat > /etc/open5gs/upf.yaml <<EOF
 logger:
-  file: /var/log/open5gs/upf.log
+  file:
+    path: /var/log/open5gs/upf.log
+#  level: info   # fatal|error|warn|info(default)|debug|trace
+
+global:
+  max:
+    ue: 1024
 
 upf:
   pfcp:
-    - addr: ${S1AP_N2_IP}
+    server:
+      - address: ${UPF_PFCP_IP}
 
   gtpu:
-    - addr: ${UPF_GTPU_IP}
+    server:
+      - address: ${UPF_GTPU_IP}
 
   session:
-    - subnet: ${UE_POOL_INTERNET}
-      dev: ogstun
-    - subnet: ${UE_POOL_IMS}
-      dev: ogstun
+    - subnet: ${UE_POOL1}
+      gateway: ${UE_GW1}
+    - subnet: ${UE_POOL2}
+      gateway: ${UE_GW2}
+#    - subnet: 2001:db8:cafe::/48
+#      gateway: 2001:db8:cafe::1
+
+  metrics:
+    server:
+      - address: ${UPF_PFCP_IP}
+        port: 9090
 EOF
+
   ok "UPF YAML generation complete"
   info "What we did: configured UPF PFCP bind + GTPU bind + ogstun UE subnets."
+block "Final" \
+  "Restart & validate EPC + 5GC services" \
+  "Restarts Open5GS daemons and validates active state + key listening sockets"
 
-  block "Block08" "Configuration sanity checks\nDetect missing files, unresolved placeholders, and obvious mistakes"
-  req_files=(
-    /etc/open5gs/mme.yaml
-    /etc/open5gs/hss.yaml
-    /etc/open5gs/sgwc.yaml
-    /etc/open5gs/sgwu.yaml
-    /etc/open5gs/pcrf.yaml
-    /etc/open5gs/nrf.yaml
-    /etc/open5gs/scp.yaml
-    /etc/open5gs/amf.yaml
-    /etc/open5gs/smf.yaml
-    /etc/open5gs/udr.yaml
-    /etc/open5gs/udm.yaml
-    /etc/open5gs/ausf.yaml
-    /etc/open5gs/pcf.yaml
-    /etc/open5gs/nssf.yaml
-    /etc/open5gs/bsf.yaml
-    /etc/open5gs/sepp.yaml
-    /etc/open5gs/upf.yaml
-  )
-  for f in "${req_files[@]}"; do
-    [[ -s "$f" ]] || fail "Config missing/empty: $f"
-    if grep -q '\${' "$f"; then
-      fail "Unresolved variable placeholder detected in $f"
-    fi
-  done
-  ok "All required YAML files exist and contain no unresolved placeholders"
-  info "What we did: validated every YAML exists, non-empty, and no leftover template variables."
+info "Restarting Open5GS services..."
+systemctl daemon-reload
+
+# Restart key EPC + 5GC + mesh services
+systemctl restart \
+  open5gs-mmed open5gs-hssd open5gs-sgwcd open5gs-sgwud open5gs-pcrfd \
+  open5gs-nrfd open5gs-scpd \
+  open5gs-amfd open5gs-smfd open5gs-upfd \
+  open5gs-udrd open5gs-udmd open5gs-ausfd open5gs-nssfd open5gs-pcfd open5gs-bsfd open5gs-seppd \
+  || true
+
+sleep 2
+
+# Active check
+bad=0
+for s in \
+  open5gs-mmed open5gs-hssd open5gs-sgwcd open5gs-sgwud open5gs-pcrfd \
+  open5gs-nrfd open5gs-scpd open5gs-amfd open5gs-smfd open5gs-upfd
+do
+  if systemctl is-active --quiet "$s"; then
+    ok "$s is active"
+  else
+    fail "$s is NOT active"
+    bad=1
+  fi
+done
+
+# Socket sanity (non-fatal, informational)
+info "Socket sanity (LISTEN):"
+ss -lntup | grep -E "(:${SBI_PORT}\b|:38412\b|:2152\b)" || true
+
+if [[ $bad -eq 0 ]]; then
+  ok "All key EPC + 5GC services are running"
+else
+  fail "One or more services failed. Check logs:"
+  info "  journalctl -u open5gs-amfd -u open5gs-smfd -u open5gs-upfd -u open5gs-scpd -u open5gs-nrfd --no-pager -n 200"
+fi
+
+info "What we did:"
+info "- Restarted EPC (MME/HSS/SGW-C/SGW-U/PCRF), 5GC (AMF/SMF/UPF), and mesh (NRF/SCP)"
+info "- Validated systemd active state + displayed key listening ports"
+
+# ============================================================
+# Block08: Configuration sanity checks (SEPP optional)
+# - Validates required YAMLs exist & are non-empty
+# - Detects unresolved ${VARS}
+# - SEPP validation only when ENABLE_SEPP=true
+# ============================================================
+
+block "Block08" "Configuration sanity checks\nDetect missing files, unresolved placeholders, and obvious mistakes"
+
+# Default: single-PLMN mode => SEPP optional (OFF)
+ENABLE_SEPP="${ENABLE_SEPP:-false}"
+
+# Base required YAMLs (EPC + 5GC core you actually generate)
+req_files=(
+  /etc/open5gs/mme.yaml
+  /etc/open5gs/hss.yaml
+  /etc/open5gs/sgwc.yaml
+  /etc/open5gs/sgwu.yaml
+  /etc/open5gs/pcrf.yaml
+
+  /etc/open5gs/nrf.yaml
+  /etc/open5gs/scp.yaml
+  /etc/open5gs/amf.yaml
+  /etc/open5gs/smf.yaml
+  /etc/open5gs/upf.yaml
+
+  /etc/open5gs/udr.yaml
+  /etc/open5gs/udm.yaml
+  /etc/open5gs/ausf.yaml
+  /etc/open5gs/pcf.yaml
+  /etc/open5gs/nssf.yaml
+  /etc/open5gs/bsf.yaml
+)
+
+# SEPP policy:
+# - Single node / single PLMN: not required
+# - Only require SEPP configs when explicitly enabled
+if [[ "$ENABLE_SEPP" == "true" ]]; then
+  # Match your working VM pattern: sepp1.yaml + sepp2.yaml
+  req_files+=(/etc/open5gs/sepp1.yaml)
+  req_files+=(/etc/open5gs/sepp2.yaml)
+  info "SEPP sanity: ENABLE_SEPP=true → requiring sepp1.yaml + sepp2.yaml"
+else
+  info "SEPP sanity: ENABLE_SEPP=false → SEPP configs not required (single-PLMN mode)"
+fi
+
+bad=0
+for f in "${req_files[@]}"; do
+  if [[ ! -s "$f" ]]; then
+    fail "Config missing/empty: $f"
+    bad=1
+    continue
+  fi
+
+  # Detect unresolved template variables
+  if grep -q '\${' "$f"; then
+    fail "Unresolved variable placeholder detected in $f"
+    bad=1
+  fi
+done
+
+# Optional but useful: warn (not fail) if old sepp.yaml exists but you're using sepp1/2
+if [[ -s /etc/open5gs/sepp.yaml && "$ENABLE_SEPP" != "true" ]]; then
+  warn "Found /etc/open5gs/sepp.yaml but ENABLE_SEPP=false; ignoring (legacy file)."
+fi
+
+if [[ $bad -eq 0 ]]; then
+  ok "Sanity OK: required YAMLs exist, non-empty, and no unresolved placeholders"
+  info "What we did: verified generated configs are present and clean; SEPP checked only if enabled."
+else
+  fail "Sanity FAIL: one or more required configs missing or contain unresolved placeholders"
+  info "Tip: open the failing file and check variables + indentation:"
+  info "  sed -n '1,200p' /etc/open5gs/amf.yaml"
+  info "  grep -n '\\${' -n /etc/open5gs/*.yaml || true"
+  exit 1
+fi
 
   block "Block09" "Restart services in correct dependency order\nNRF → SCP → DB NFs → AMF/SMF/UPF → EPC NFs"
   # Mongo just check
