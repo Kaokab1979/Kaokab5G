@@ -130,8 +130,10 @@ main(){
   ok "MongoDB running (mongod active)"
 
   # Open5GS packages presence (at least core ones)
-  dpkg -l | grep -q '^ii\s\+open5gs' || fail "Open5GS packages not installed."
-  ok "Open5GS packages present"
+  if ! systemctl list-unit-files | grep -q '^open5gs-amfd.service'; then
+  fail "Open5GS services not found (open5gs-amfd.service missing)."
+fi
+ok "Open5GS services detected"
 
   info "What we did: verified prerequisites (root, /etc/open5gs, ip_forward, mongod, Open5GS installed)."
 
