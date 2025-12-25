@@ -1,143 +1,180 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
-############################################
-# KAOKAB5GC – Unified Core Bootstrap (666)
-# Single Node EPC + 5GC (SCP-based)
-# Ubuntu 22.04 (Jammy)
-############################################
+# ============================================================
+# KAOKAB5GC – PRODUCTION INSTALLER
+# install01.sh
+# ============================================================
 
-### ---------- UX helpers ----------
+VERSION="1.0"
+CFG_DIR="/etc/kaokab"
+CFG_FILE="${CFG_DIR}/kaokab.env"
 LOG_DIR="/var/log/kaokab"
+LOG_FILE="${LOG_DIR}/kaokab-install-$(date +%F_%H%M%S).log"
+
+# ---------- Colors ----------
+BOLD="\033[1m"
+GREEN="\033[32m"
+RED="\033[31m"
+YELLOW="\033[33m"
+BLUE="\033[34m"
+RESET="\033[0m"
+
+# ---------- Logging ----------
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/kaokab5gc-install-$(date +%F_%H%M%S).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-info() { echo "[INFO] $*"; }
-ok()   { echo "[OK]   $*"; }
-warn() { echo "[WARN] $*"; }
-die()  { echo "[FAIL] $*" ; exit 1; }
+info() { echo -e "${BLUE}[INFO]${RESET} $*"; }
+ok()   { echo -e "${GREEN}[OK]${RESET}   $*"; }
+warn() { echo -e "${YELLOW}[WARN]${RESET} $*"; }
+fail() { echo -e "${RED}[FAIL]${RESET} $*"; exit 1; }
 
-block() {
-  echo
-  echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-  printf "║ ▶▶ %-72s ║\n" "$1"
-  echo "╠══════════════════════════════════════════════════════════════════════════════╣"
-  printf "║ %-72s ║\n" "$2"
-  echo "╚══════════════════════════════════════════════════════════════════════════════╝"
-}
-
-############################################
+# ============================================================
 # Banner
-############################################
-echo
-echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-echo "║ ✅ KAOKAB5GC UNIFIED INSTALLER (SINGLE NODE: EPC + 5GC, SCP-BASED)            ║"
-echo "╚══════════════════════════════════════════════════════════════════════════════╝"
-info "Zero-interaction: enabled (no prompts)"
-info "Log file: $LOG_FILE"
-info "Config file: /etc/kaokab/kaokab.env"
+# ============================================================
+clear
+cat <<EOF
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ✅ KAOKAB5GC PRODUCTION INSTALLER (EPC + 5GC FOUNDATION)                    ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ Version: ${VERSION}                                                         ║
+║ Mode: Interactive-once, deterministic thereafter                            ║
+║ Log:  ${LOG_FILE}                                                           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+EOF
 
-############################################
-# Block01 – Base system tooling
-############################################
-block "Block01" "System checks + base tooling"
+# ============================================================
+# Block01: System foundation
+# ============================================================
+echo -e "\n${BOLD}▶▶ Block01: System foundation${RESET}"
 
-lsb_release -cs | grep -q jammy || die "Ubuntu 22.04 (Jammy) required"
+[[ $EUID -eq 0 ]] || fail "Run as root"
+
+. /etc/os-release
+[[ "$VERSION_ID" == "22.04" ]] || fail "Ubuntu 22.04 required"
 
 apt-get update -y
 apt-get install -y \
-  ca-certificates curl gnupg jq net-tools \
-  iproute2 software-properties-common
+  ca-certificates curl gnupg jq iproute2 net-tools \
+  software-properties-common iptables-persistent dialog
 
-ok "Base OS verified (Ubuntu Jammy)"
-ok "Required system tools installed"
+ok "Base OS verified and required packages installed"
 
-############################################
-# Block02 – Load or generate config
-############################################
-block "Block02" "Load or auto-generate deployment parameters"
+# ============================================================
+# Block02: Deployment parameters (interactive if missing)
+# ============================================================
+echo -e "\n${BOLD}▶▶ Block02: Deployment parameters${RESET}"
 
-CFG="/etc/kaokab/kaokab.env"
-mkdir -p /etc/kaokab
+mkdir -p "$CFG_DIR"
+chmod 700 "$CFG_DIR"
 
-if [[ ! -f "$CFG" ]]; then
-  warn "Config not found – generating defaults"
-  cat > "$CFG" <<EOF
-# Network
-IFACE=ens160
-N2_IP=192.168.178.80
-N3_IP=192.168.178.81
-UPF_GTPU_IP=192.168.178.82
-GW_IP=192.168.178.1
-DNS1=1.1.1.1
-DNS2=1.0.0.1
+# ---- helpers (CIDR -> first host .1 for IPv4 pools) ----
+ipv4_from_cidr() { echo "${1%%/*}"; }
 
-# UE pools
-UE_POOL1=10.45.0.0/16
-UE_POOL2=10.46.0.0/16
+guess_pool_gw_v4() {
+  local cidr="$1"
+  local ip; ip="$(ipv4_from_cidr "$cidr")"
+  # replace last octet with 1 (works for typical 10.x/16, /24, etc.)
+  echo "$ip" | awk -F. 'NF==4{print $1"."$2"."$3".1"; exit} {print ""}'
+}
+
+if [[ -f "$CFG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CFG_FILE"
+  ok "Existing configuration detected: $CFG_FILE"
+
+  # If old env exists but gateways missing, backfill safely (no prompts)
+  if [[ -z "${UE_GW1:-}" && -n "${UE_POOL1:-}" ]]; then
+    UE_GW1="$(guess_pool_gw_v4 "$UE_POOL1")"
+    warn "UE_GW1 missing in env → auto-set to ${UE_GW1}"
+  fi
+  if [[ -z "${UE_GW2:-}" && -n "${UE_POOL2:-}" ]]; then
+    UE_GW2="$(guess_pool_gw_v4 "$UE_POOL2")"
+    warn "UE_GW2 missing in env → auto-set to ${UE_GW2}"
+  fi
+
+else
+  info "No config found – starting interactive setup"
+
+  iface_default="$(ip -br link | awk '$1!="lo"{print $1; exit}')"
+  gw_default="$(ip route show default | awk '{print $3}')"
+
+  INTERFACE="$(dialog --stdout --inputbox "Network interface" 8 60 "$iface_default")"
+  N2_IP="$(dialog --stdout --inputbox "N2 / S1AP IPv4" 8 60 "")"
+  N3_IP="$(dialog --stdout --inputbox "N3 / GTP-U IPv4" 8 60 "")"
+  UPF_GTPU_IP="$(dialog --stdout --inputbox "UPF GTP-U IPv4" 8 60 "")"
+  GATEWAY="$(dialog --stdout --inputbox "Default gateway" 8 60 "$gw_default")"
+  DNS1="$(dialog --stdout --inputbox "DNS 1" 8 60 "1.1.1.1")"
+  DNS2="$(dialog --stdout --inputbox "DNS 2" 8 60 "1.0.0.1")"
+
+  UE_POOL1="$(dialog --stdout --inputbox "UE pool (internet) CIDR" 8 60 "10.45.0.0/16")"
+  UE_POOL2="$(dialog --stdout --inputbox "UE pool (IMS) CIDR" 8 60 "10.46.0.0/16")"
+
+  # Suggested gateways from pools (editable)
+  UE_GW1_DEFAULT="$(guess_pool_gw_v4 "$UE_POOL1")"
+  UE_GW2_DEFAULT="$(guess_pool_gw_v4 "$UE_POOL2")"
+
+  UE_GW1="$(dialog --stdout --inputbox "UE gateway for internet pool (usually x.x.x.1)" 8 60 "${UE_GW1_DEFAULT:-10.45.0.1}")"
+  UE_GW2="$(dialog --stdout --inputbox "UE gateway for IMS pool (usually x.x.x.1)" 8 60 "${UE_GW2_DEFAULT:-10.46.0.1}")"
+
+  MCC="$(dialog --stdout --inputbox "MCC (3 digits)" 8 60 "204")"
+  MNC="$(dialog --stdout --inputbox "MNC (2–3 digits)" 8 60 "61")"
+  TAC="$(dialog --stdout --inputbox "TAC" 8 60 "1")"
+  SST="$(dialog --stdout --inputbox "Slice SST" 8 60 "1")"
+  SD="$(dialog --stdout --inputbox "Slice SD (hex)" 8 60 "010203")"
+
+fi
+
+# Always (re)write env in a normalized way so all vars exist
+cat >"$CFG_FILE" <<EOF
+# KAOKAB5GC deployment configuration
+IFACE=${IFACE:-$INTERFACE}
+N2_IP=${N2_IP}
+N3_IP=${N3_IP}
+UPF_GTPU_IP=${UPF_GTPU_IP}
+GW_IP=${GW_IP:-$GATEWAY}
+DNS1=${DNS1}
+DNS2=${DNS2}
+
+# UE pools + gateways (used by UPF session blocks)
+UE_POOL1=${UE_POOL1}
+UE_GW1=${UE_GW1}
+UE_POOL2=${UE_POOL2}
+UE_GW2=${UE_GW2}
 
 # PLMN / Slice
-MCC=204
-MNC=61
-TAC=1
-SST=1
-SD=010203
+MCC=${MCC}
+MNC=${MNC}
+TAC=${TAC}
+SST=${SST}
+SD=${SD}
 
 # Behavior
 MANAGE_NETPLAN=false
 EOF
-fi
 
-# shellcheck disable=SC1090
-source "$CFG"
+chmod 600 "$CFG_FILE"
+ok "Configuration saved to $CFG_FILE"
 
-echo
-echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-echo "║ CONFIG SUMMARY                                                               ║"
-echo "╠══════════════════════════════════════════════════════════════════════════════╣"
-printf "║ Interface: %-62s ║\n" "$IFACE"
-printf "║ S1AP/N2:   %-62s ║\n" "$N2_IP"
-printf "║ GTPU/N3:   %-62s ║\n" "$N3_IP"
-printf "║ UPF GTPU:  %-62s ║\n" "$UPF_GTPU_IP"
-printf "║ GW/DNS:    %-62s ║\n" "$GW_IP | $DNS1, $DNS2"
-printf "║ UE pools:  %-62s ║\n" "$UE_POOL1 , $UE_POOL2"
-printf "║ PLMN:      %-62s ║\n" "$MCC/$MNC  TAC:$TAC  Slice:$SST/$SD"
-echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+info "What we did: collected/loaded N2,N3,UPF IPs + UE pools and gateways (UE_GW1/UE_GW2) + PLMN/Slice parameters."
 
-ok "Deployment parameters loaded"
 
-############################################
-# Block03 – Netplan (optional)
-############################################
-block "Block03" "Netplan management (optional)"
+# ============================================================
+# Block03: Networking validation (no netplan modification)
+# ============================================================
+echo -e "\n${BOLD}▶▶ Block03: Network validation${RESET}"
 
-if [[ "$MANAGE_NETPLAN" == "true" ]]; then
-  warn "Netplan automation requested but intentionally not implemented"
-else
-  ok "Netplan untouched (MANAGE_NETPLAN=false)"
-fi
+ip link show "$IFACE" >/dev/null || fail "Interface $IFACE not found"
+ok "Interface $IFACE exists"
 
-############################################
-# Block04 – IP forwarding & NAT (WORKING VM MODEL)
-############################################
-block "Block04" "Enable IP forwarding & NAT for UE subnets"
+# ============================================================
+# Block04: Kernel forwarding & NAT
+# ============================================================
+echo -e "\n${BOLD}▶▶ Block04: Kernel forwarding & NAT${RESET}"
 
-info "Enabling IPv4 forwarding (working VM behavior)"
-
-mkdir -p /etc/sysctl.d
-echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-kaokab5gc.conf
-sysctl -w net.ipv4.ip_forward=1 >/dev/null
-
-[[ "$(sysctl -n net.ipv4.ip_forward)" == "1" ]] \
-  || die "IPv4 forwarding could not be enabled"
-
+sysctl -w net.ipv4.ip_forward=1
+echo "net.ipv4.ip_forward=1" >/etc/sysctl.d/99-kaokab5gc.conf
 ok "IPv4 forwarding enabled"
-
-info "Installing iptables persistence"
-apt-get install -y iptables-persistent netfilter-persistent
-
-info "Applying NAT rules (MASQUERADE -s POOL ! -o ogstun)"
 
 iptables -t nat -C POSTROUTING -s "$UE_POOL1" ! -o ogstun -j MASQUERADE 2>/dev/null \
   || iptables -t nat -A POSTROUTING -s "$UE_POOL1" ! -o ogstun -j MASQUERADE
@@ -145,73 +182,79 @@ iptables -t nat -C POSTROUTING -s "$UE_POOL1" ! -o ogstun -j MASQUERADE 2>/dev/n
 iptables -t nat -C POSTROUTING -s "$UE_POOL2" ! -o ogstun -j MASQUERADE 2>/dev/null \
   || iptables -t nat -A POSTROUTING -s "$UE_POOL2" ! -o ogstun -j MASQUERADE
 
-netfilter-persistent save >/dev/null
+netfilter-persistent save
+ok "NAT rules applied and persisted"
 
-ok "NAT rules installed and persisted"
-iptables -t nat -S POSTROUTING | grep -E "$UE_POOL1|$UE_POOL2" || true
+# ============================================================
+# Block05: Loopback validation
+# ============================================================
+echo -e "\n${BOLD}▶▶ Block05: Loopback validation${RESET}"
 
-############################################
-# Block05 – Loopback validation (NO aliases)
-############################################
-block "Block05" "Loopback model validation (match working VM)"
-
-ip -4 addr show lo | grep -q "127.0.0.1/8" \
-  || die "Loopback /8 not present"
-
-ip route show table local | grep -q "127.0.0.0/8" \
-  || die "Local 127/8 route missing"
-
+ip -4 addr show lo | grep -q "127.0.0.1/8" || fail "Loopback misconfigured"
 ok "Loopback model validated (127.0.0.1/8 only)"
-info "No loopback aliases created (correct for Open5GS)"
 
-############################################
-# Block06 – MongoDB 6.0
-############################################
-block "Block06" "Install MongoDB 6.0 (non-interactive)"
+# ============================================================
+# Block06: MongoDB installation
+# ============================================================
+echo -e "\n${BOLD}▶▶ Block06: MongoDB installation${RESET}"
 
-if ! systemctl is-active --quiet mongod; then
-  curl -fsSL https://pgp.mongodb.com/server-6.0.asc \
-    | gpg --dearmor -o /etc/apt/keyrings/mongodb-server-6.0.gpg
+if ! command -v mongod >/dev/null; then
+  curl -fsSL https://pgp.mongodb.com/server-6.0.asc |
+    gpg --dearmor -o /etc/apt/keyrings/mongodb-6.gpg
 
-  echo "deb [signed-by=/etc/apt/keyrings/mongodb-server-6.0.gpg] \
+  echo "deb [signed-by=/etc/apt/keyrings/mongodb-6.gpg] \
 https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" \
-    > /etc/apt/sources.list.d/mongodb-org-6.0.list
+> /etc/apt/sources.list.d/mongodb-org-6.0.list
 
   apt-get update -y
   apt-get install -y mongodb-org
-  systemctl enable --now mongod
 fi
 
-systemctl is-active --quiet mongod || die "MongoDB not running"
-ok "MongoDB 6.0 installed and running"
+systemctl enable --now mongod
+systemctl is-active mongod >/dev/null || fail "MongoDB not running"
+ok "MongoDB installed and running"
 
-############################################
-# Block07 – Open5GS core (NO WebUI)
-############################################
-block "Block07" "Install Open5GS core (PPA, no WebUI)"
+# ============================================================
+# Block07: Open5GS installation
+# ============================================================
+echo -e "\n${BOLD}▶▶ Block07: Open5GS installation${RESET}"
 
 add-apt-repository -y ppa:open5gs/latest
 apt-get update -y
 apt-get install -y open5gs
 
+systemctl daemon-reexec
+systemctl daemon-reload
+
 ok "Open5GS core packages installed"
+info "WebUI intentionally NOT installed (production recommendation)"
 
-info "WebUI not installed automatically (recommended for production)"
-info "If needed, install WebUI separately using NodeJS"
+# ============================================================
+# Final: Core readiness
+# ============================================================
+echo -e "\n${BOLD}▶▶ Final: Core readiness validation${RESET}"
 
-############################################
-# Final summary
-############################################
-echo
-echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-echo "║ ✅ KAOKAB5GC BASE SYSTEM READY                                              ║"
-echo "╠══════════════════════════════════════════════════════════════════════════════╣"
-echo "║ ✔ OS verified                                                             ║"
-echo "║ ✔ Networking prepared                                                     ║"
-echo "║ ✔ NAT + forwarding active                                                 ║"
-echo "║ ✔ MongoDB running                                                         ║"
-echo "║ ✔ Open5GS installed                                                       ║"
-echo "║ ✖ WebUI intentionally skipped                                             ║"
-echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+systemctl is-active mongod >/dev/null || fail "MongoDB inactive"
+systemctl list-unit-files | grep -q open5gs-amfd.service || fail "Open5GS units missing"
 
-ok "You may now proceed to Open5GS configuration & production GUI work"
+ok "All prerequisites satisfied"
+
+cat <<EOF
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ✅ KAOKAB5GC INSTALLATION COMPLETE                                          ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ ✔ OS prepared                                                              ║
+║ ✔ Network validated                                                        ║
+║ ✔ NAT + forwarding active                                                  ║
+║ ✔ MongoDB running                                                          ║
+║ ✔ Open5GS installed                                                        ║
+║ ✖ No configuration applied (by design)                                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+NEXT STEP:
+  → Run ./777.sh to configure EPC + 5GC
+
+EOF
+
+exit 0
